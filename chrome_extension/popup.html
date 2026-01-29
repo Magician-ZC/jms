@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JMS Token Manager</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- 头部 -->
+    <header class="header">
+      <div class="logo">
+        <img src="icons/icon48.png" alt="Logo" class="logo-icon">
+        <span class="logo-text">Token Manager</span>
+      </div>
+    </header>
+
+    <!-- 主开关 -->
+    <section class="switch-section">
+      <div class="switch-row">
+        <span class="switch-label">Token监听</span>
+        <label class="switch">
+          <input type="checkbox" id="mainSwitch">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <p class="switch-hint" id="switchHint">点击开关启动Token获取</p>
+    </section>
+
+    <!-- 状态显示 -->
+    <section class="status-section">
+      <div class="status-item">
+        <span class="status-label">连接状态</span>
+        <span class="status-value" id="connectionStatus">
+          <span class="status-dot disconnected"></span>
+          <span class="status-text">未连接</span>
+        </span>
+      </div>
+      
+      <div class="status-item">
+        <span class="status-label">Token状态</span>
+        <span class="status-value" id="tokenStatus">
+          <span class="status-dot none"></span>
+          <span class="status-text">无Token</span>
+        </span>
+      </div>
+      
+      <div class="status-item">
+        <span class="status-label">最后更新</span>
+        <span class="status-value" id="lastUpdate">-</span>
+      </div>
+    </section>
+
+    <!-- 操作按钮 -->
+    <section class="action-section">
+      <button class="btn btn-secondary" id="refreshBtn">
+        <span class="btn-icon">↻</span>
+        刷新状态
+      </button>
+    </section>
+
+    <!-- 底部信息 -->
+    <footer class="footer">
+      <span class="version">v1.0.0</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

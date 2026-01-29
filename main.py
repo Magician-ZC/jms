@@ -15,6 +15,7 @@ def show_menu():
     print("=" * 50)
     print("1. 下载虚假签收报表")
     print("2. 实时数据采集（推送CRM）")
+    print("3. Token管理服务")
     print("0. 退出")
     print("=" * 50)
 
@@ -85,6 +86,59 @@ async def run_realtime_crawler():
             break
 
 
+async def run_token_manager():
+    """运行Token管理服务"""
+    from token_manager import run_server
+    from token_manager.config import SERVER_HOST, SERVER_PORT, KEEP_ALIVE_INTERVAL
+    
+    print("\n" + "=" * 50)
+    print("Token管理服务配置")
+    print("=" * 50)
+    
+    # 获取配置选项
+    host_input = input(f"服务地址 (默认 {SERVER_HOST}): ").strip()
+    host = host_input if host_input else SERVER_HOST
+    
+    port_input = input(f"服务端口 (默认 {SERVER_PORT}): ").strip()
+    try:
+        port = int(port_input) if port_input else SERVER_PORT
+    except ValueError:
+        print(f"[警告] 无效端口，使用默认值 {SERVER_PORT}")
+        port = SERVER_PORT
+    
+    keeper_input = input("启用Token保活服务? (Y/n): ").strip().lower()
+    enable_keeper = keeper_input != 'n'
+    
+    keeper_interval = KEEP_ALIVE_INTERVAL
+    if enable_keeper:
+        interval_input = input(f"保活间隔（秒）(默认 {KEEP_ALIVE_INTERVAL}): ").strip()
+        try:
+            keeper_interval = int(interval_input) if interval_input else KEEP_ALIVE_INTERVAL
+        except ValueError:
+            print(f"[警告] 无效间隔，使用默认值 {KEEP_ALIVE_INTERVAL}")
+    
+    print("\n" + "=" * 50)
+    print("启动Token管理服务...")
+    print(f"  地址: http://{host}:{port}")
+    print(f"  保活服务: {'启用' if enable_keeper else '禁用'}")
+    if enable_keeper:
+        print(f"  保活间隔: {keeper_interval}秒")
+    print("=" * 50)
+    print("\n按 Ctrl+C 停止服务\n")
+    
+    try:
+        await run_server(
+            host=host,
+            port=port,
+            enable_keeper=enable_keeper,
+            keeper_interval=keeper_interval
+        )
+    except KeyboardInterrupt:
+        print("\n\n[退出] Token管理服务已停止")
+    except Exception as e:
+        print(f"\n[错误] 服务异常: {str(e)}")
+
+
 async def main():
     """主函数"""
     # 支持命令行参数直接执行
@@ -97,6 +151,9 @@ async def main():
         elif cmd == "crawler":
             await run_realtime_crawler()
             return
+        elif cmd == "token_manager":
+            await run_token_manager()
+            return
     
     # 交互式菜单
     while True:
@@ -108,6 +165,8 @@ async def main():
             await run_false_sign(date)
         elif choice == "2":
             await run_realtime_crawler()
+        elif choice == "3":
+            await run_token_manager()
         elif choice == "0":
             print("再见!")
             break

@@ -1,0 +1,56 @@
+"""
+Token Manager Configuration
+Token管理系统配置文件
+"""
+
+import os
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+
+# 中国时区 (UTC+8)
+CHINA_TZ = timezone(timedelta(hours=8))
+
+
+def get_china_now() -> datetime:
+    """获取当前中国时间（东八区）"""
+    return datetime.now(CHINA_TZ)
+
+
+# 基础路径配置
+BASE_DIR = Path(__file__).parent.parent
+DATA_DIR = BASE_DIR / "token_data"
+
+# 确保数据目录存在
+DATA_DIR.mkdir(exist_ok=True)
+
+# 数据库配置
+DATABASE_URL = os.getenv("TOKEN_DB_URL", f"sqlite:///{DATA_DIR}/tokens.db")
+
+# 服务器配置
+SERVER_HOST = os.getenv("TOKEN_SERVER_HOST", "127.0.0.1")
+SERVER_PORT = int(os.getenv("TOKEN_SERVER_PORT", "8080"))
+
+# WebSocket配置
+WS_HEARTBEAT_INTERVAL = int(os.getenv("WS_HEARTBEAT_INTERVAL", "30"))  # 秒
+WS_RECONNECT_ATTEMPTS = int(os.getenv("WS_RECONNECT_ATTEMPTS", "3"))
+WS_RECONNECT_INTERVAL = int(os.getenv("WS_RECONNECT_INTERVAL", "5"))  # 秒
+
+# Token保活配置
+KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "300"))  # 秒，默认5分钟
+
+# 加密配置
+TOKEN_ENCRYPT_KEY = os.getenv("TOKEN_ENCRYPT_KEY", None)
+
+# JMS平台配置
+JMS_LOGIN_URL = "https://jms.jtexpress.com.cn/login"
+JMS_INDEX_URL = "https://jms.jtexpress.com.cn/index"
+JMS_API_BASE_URL = "https://jmsgw.jtexpress.com.cn"
+
+# 保活配置 - 使用数据平台页面进行保活
+KEEP_ALIVE_URL = "https://idata.jtexpress.com.cn/indexSub"
+
+# 管理界面密码（生产环境应使用环境变量）
+MANAGEMENT_PASSWORD = os.getenv("MANAGEMENT_PASSWORD", "admin123")
+
+# 日志配置
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
