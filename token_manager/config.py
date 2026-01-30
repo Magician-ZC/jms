@@ -6,6 +6,10 @@ Token管理系统配置文件
 import os
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+load_dotenv()
 
 # 中国时区 (UTC+8)
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -27,7 +31,7 @@ DATA_DIR.mkdir(exist_ok=True)
 DATABASE_URL = os.getenv("TOKEN_DB_URL", f"sqlite:///{DATA_DIR}/tokens.db")
 
 # 服务器配置
-SERVER_HOST = os.getenv("TOKEN_SERVER_HOST", "127.0.0.1")
+SERVER_HOST = os.getenv("TOKEN_SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("TOKEN_SERVER_PORT", "8080"))
 
 # WebSocket配置

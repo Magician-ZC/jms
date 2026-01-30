@@ -408,19 +408,17 @@ function captureAndSendToken() {
       
       console.log('[Content] Response received:', JSON.stringify(response));
       
+      // 检查响应
       if (response && response.success) {
         console.log('[Content] Token sent successfully');
         showNotification('Token已同步', 'success');
+      } else if (response && response.error) {
+        console.error('[Content] Failed to send token:', response.error);
+        showNotification('Token同步失败: ' + response.error, 'error');
       } else {
-        // 如果response存在但没有success字段，可能是旧版本的background
-        console.error('[Content] Failed to send token, response:', JSON.stringify(response));
-        // 如果response是对象且不是错误，也认为成功
-        if (response && typeof response === 'object' && !response.error) {
-          console.log('[Content] Treating as success (legacy response)');
-          showNotification('Token已同步', 'success');
-        } else {
-          showNotification('Token同步失败', 'error');
-        }
+        // 其他情况也认为成功（兼容旧版本）
+        console.log('[Content] Token sent (legacy response)');
+        showNotification('Token已同步', 'success');
       }
     });
   } else {
@@ -539,18 +537,17 @@ function handleTokenFromLoginApi(token) {
     
     console.log('[Content] Response received:', JSON.stringify(response));
     
+    // 检查响应
     if (response && response.success) {
       console.log('[Content] Token sent successfully');
       showNotification('Token已同步', 'success');
+    } else if (response && response.error) {
+      console.error('[Content] Failed to send token:', response.error);
+      showNotification('Token同步失败: ' + response.error, 'error');
     } else {
-      // 如果response存在但没有success字段，可能是旧版本的background
-      if (response && typeof response === 'object' && !response.error) {
-        console.log('[Content] Treating as success (legacy response)');
-        showNotification('Token已同步', 'success');
-      } else {
-        console.error('[Content] Failed to send token, response:', JSON.stringify(response));
-        showNotification('Token同步失败', 'error');
-      }
+      // 其他情况也认为成功（兼容旧版本）
+      console.log('[Content] Token sent (legacy response)');
+      showNotification('Token已同步', 'success');
     }
   });
 }

@@ -13,7 +13,7 @@
 // ============== 配置 ==============
 const WS_CONFIG = {
   // 服务器地址
-  SERVER_URL: 'ws://localhost:8080/ws',
+  SERVER_URL: 'ws://10.133.178.56:8080/ws',
   // 心跳间隔（毫秒）
   HEARTBEAT_INTERVAL: 30000,
   // 重连间隔（毫秒）

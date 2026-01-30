@@ -116,15 +116,19 @@ class TokenService:
         user_id = user_id.strip()
         if account:
             account = account.strip()
+            # user_id 使用 account 的值
+            user_id = account
         
         try:
             # 加密Token
             encrypted_token = encrypt_token(token)
             
-            # 查找现有记录
-            existing = self.session.query(Token).filter(
-                Token.user_id == user_id
-            ).first()
+            # 按 account 查找现有记录（account 是唯一标识）
+            existing = None
+            if account:
+                existing = self.session.query(Token).filter(
+                    Token.account == account
+                ).first()
             
             if existing:
                 # 更新现有记录

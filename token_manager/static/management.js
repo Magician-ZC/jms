@@ -18,7 +18,8 @@ const CONFIG = {
     RECONNECT_INTERVAL: 5000,
     MAX_RECONNECT_ATTEMPTS: 3,
     TOAST_DURATION: 3000,
-    AUTH_KEY: 'token_manager_auth'
+    AUTH_KEY: 'token_manager_auth',
+    HEARTBEAT_INTERVAL: 25000  // 心跳间隔25秒，小于服务端的30秒检测间隔
 };
 
 // ============== 状态管理 ==============
@@ -30,7 +31,9 @@ const state = {
     ws: null,
     reconnectAttempts: 0,
     deleteTargetId: null,
-    showExpired: true
+    showExpired: true,
+    heartbeatTimer: null,
+    extensionId: null
 };
 
 // ============== DOM元素引用 ==============
@@ -361,6 +364,12 @@ function connectWebSocket() {
         return;
     }
     
+    // 清理旧的心跳定时器
+    if (state.heartbeatTimer) {
+        clearInterval(state.heartbeatTimer);
+        state.heartbeatTimer = null;
+    }
+    
     try {
         state.ws = new WebSocket(CONFIG.WS_URL);
         
@@ -370,15 +379,21 @@ function connectWebSocket() {
             state.reconnectAttempts = 0;
             updateConnectionStatus(true);
             
+            // 生成唯一的extensionId
+            state.extensionId = 'management-ui-' + Date.now();
+            
             // 发送注册消息（作为管理界面客户端）
             sendWsMessage({
                 type: 'register',
                 payload: {
-                    extensionId: 'management-ui-' + Date.now(),
+                    extensionId: state.extensionId,
                     version: '1.0.0'
                 },
                 timestamp: Date.now()
             });
+            
+            // 启动心跳定时器
+            startHeartbeat();
         };
         
         state.ws.onmessage = (event) => {
@@ -395,6 +410,9 @@ function connectWebSocket() {
             state.wsConnected = false;
             updateConnectionStatus(false);
             
+            // 停止心跳
+            stopHeartbeat();
+            
             // 尝试重连
             if (state.isAuthenticated && state.reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS) {
                 state.reconnectAttempts++;
@@ -409,6 +427,41 @@ function connectWebSocket() {
     } catch (error) {
         console.error('创建WebSocket连接失败:', error);
         updateConnectionStatus(false);
+    }
+}
+
+/**
+ * 启动心跳定时器
+ */
+function startHeartbeat() {
+    if (state.heartbeatTimer) {
+        clearInterval(state.heartbeatTimer);
+    }
+    
+    state.heartbeatTimer = setInterval(() => {
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+            sendWsMessage({
+                type: 'heartbeat',
+                payload: {
+                    extensionId: state.extensionId
+                },
+                timestamp: Date.now()
+            });
+            console.log('发送心跳');
+        }
+    }, CONFIG.HEARTBEAT_INTERVAL);
+    
+    console.log(`心跳定时器已启动，间隔=${CONFIG.HEARTBEAT_INTERVAL}ms`);
+}
+
+/**
+ * 停止心跳定时器
+ */
+function stopHeartbeat() {
+    if (state.heartbeatTimer) {
+        clearInterval(state.heartbeatTimer);
+        state.heartbeatTimer = null;
+        console.log('心跳定时器已停止');
     }
 }
 

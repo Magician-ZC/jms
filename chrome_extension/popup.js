@@ -16,6 +16,11 @@ const connectionStatus = document.getElementById('connectionStatus');
 const tokenStatus = document.getElementById('tokenStatus');
 const lastUpdate = document.getElementById('lastUpdate');
 const refreshBtn = document.getElementById('refreshBtn');
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsPanel = document.getElementById('settingsPanel');
+const serverAddress = document.getElementById('serverAddress');
+const cancelSettings = document.getElementById('cancelSettings');
+const saveSettings = document.getElementById('saveSettings');
 
 // ============== 状态管理 ==============
 let currentState = {
@@ -56,6 +61,11 @@ function bindEvents() {
   
   // 刷新按钮
   refreshBtn.addEventListener('click', handleRefresh);
+  
+  // 设置按钮
+  settingsBtn.addEventListener('click', showSettings);
+  cancelSettings.addEventListener('click', hideSettings);
+  saveSettings.addEventListener('click', handleSaveSettings);
 }
 
 /**
@@ -297,16 +307,57 @@ function showMessage(text, type = 'info') {
   }, 3000);
 }
 
-// ============== 添加旋转动画样式 ==============
+// ============== 设置功能 ==============
 
-const style = document.createElement('style');
-style.textContent = `
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+/**
+ * 显示设置面板
+ */
+async function showSettings() {
+  // 加载当前服务器地址
+  const result = await chrome.storage.local.get('serverAddress');
+  serverAddress.value = result.serverAddress || '';
+  settingsPanel.style.display = 'block';
+}
+
+/**
+ * 隐藏设置面板
+ */
+function hideSettings() {
+  settingsPanel.style.display = 'none';
+}
+
+/**
+ * 保存设置
+ */
+async function handleSaveSettings() {
+  const address = serverAddress.value.trim();
+  
+  if (!address) {
+    showMessage('请输入服务器地址', 'error');
+    return;
   }
-`;
-document.head.appendChild(style);
+  
+  // 验证格式
+  if (!/^[\w.-]+:\d+$/.test(address)) {
+    showMessage('地址格式错误，应为 IP:端口', 'error');
+    return;
+  }
+  
+  // 保存到storage
+  await chrome.storage.local.set({ serverAddress: address });
+  
+  // 通知background更新
+  try {
+    await chrome.runtime.sendMessage({ action: 'updateServerAddress', address });
+    showMessage('设置已保存，重新连接中...', 'success');
+    hideSettings();
+    
+    // 刷新状态
+    setTimeout(fetchState, 1000);
+  } catch (error) {
+    showMessage('保存失败: ' + error.message, 'error');
+  }
+}
 
 // ============== 启动 ==============
 

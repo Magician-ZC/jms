@@ -58,6 +58,23 @@
         <span class="btn-icon">↻</span>
         刷新状态
       </button>
+      <button class="btn btn-secondary" id="settingsBtn">
+        <span class="btn-icon">⚙</span>
+        设置
+      </button>
+    </section>
+
+    <!-- 设置面板 -->
+    <section class="settings-section" id="settingsPanel" style="display: none;">
+      <div class="settings-title">服务器设置</div>
+      <div class="settings-item">
+        <label for="serverAddress">服务器地址</label>
+        <input type="text" id="serverAddress" placeholder="例如: 10.133.197.56:8080">
+      </div>
+      <div class="settings-actions">
+        <button class="btn btn-secondary btn-sm" id="cancelSettings">取消</button>
+        <button class="btn btn-primary btn-sm" id="saveSettings">保存</button>
+      </div>
     </section>
 
     <!-- 底部信息 -->

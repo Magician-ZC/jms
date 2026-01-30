@@ -11,8 +11,13 @@
  */
 
 // ============== 配置 ==============
+const DEFAULT_SERVER = 'localhost:8080';
+
 const CONFIG = {
-  WS_SERVER_URL: 'ws://localhost:8080/ws',
+  get WS_SERVER_URL() {
+    return `ws://${this.serverAddress}/ws`;
+  },
+  serverAddress: DEFAULT_SERVER,  // 动态更新
   HEARTBEAT_INTERVAL: 30000,  // 30秒心跳
   RECONNECT_INTERVAL: 5000,   // 5秒重连间隔
   MAX_RECONNECT_ATTEMPTS: 3,  // 最大重连次数
@@ -52,11 +57,18 @@ async function getExtensionId() {
 // 初始化状态
 async function initState() {
   state.extensionId = await getExtensionId();
-  const stored = await chrome.storage.local.get(['isEnabled', 'hasToken', 'lastTokenTime']);
+  const stored = await chrome.storage.local.get(['isEnabled', 'hasToken', 'lastTokenTime', 'serverAddress']);
   state.isEnabled = stored.isEnabled || false;
   state.hasToken = stored.hasToken || false;
   state.lastTokenTime = stored.lastTokenTime || null;
+  
+  // 加载服务器地址
+  if (stored.serverAddress) {
+    CONFIG.serverAddress = stored.serverAddress;
+  }
+  
   console.log('[Background] State initialized:', state);
+  console.log('[Background] Server address:', CONFIG.serverAddress);
 }
 
 // 保存状态到storage
@@ -151,6 +163,96 @@ function disconnectWebSocket() {
   }
   setState({ wsConnected: false });
   console.log('[Background] WebSocket disconnected');
+}
+
+/**
+ * 确保WebSocket已连接
+ * 如果未连接则尝试连接，返回连接是否成功
+ * @returns {Promise<boolean>} 连接是否成功
+ */
+async function ensureWebSocketConnected() {
+  // 已经连接
+  if (websocket && websocket.readyState === WebSocket.OPEN) {
+    return true;
+  }
+  
+  // 正在连接中，等待连接完成
+  if (websocket && websocket.readyState === WebSocket.CONNECTING) {
+    return new Promise((resolve) => {
+      const checkInterval = setInterval(() => {
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+          clearInterval(checkInterval);
+          resolve(true);
+        } else if (!websocket || websocket.readyState === WebSocket.CLOSED) {
+          clearInterval(checkInterval);
+          resolve(false);
+        }
+      }, 100);
+      
+      // 超时处理
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        resolve(false);
+      }, 10000);
+    });
+  }
+  
+  // 未连接，尝试连接
+  return new Promise((resolve) => {
+    console.log('[Background] Connecting WebSocket before sending token...');
+    
+    try {
+      websocket = new WebSocket(CONFIG.WS_SERVER_URL);
+      
+      const timeout = setTimeout(() => {
+        console.log('[Background] WebSocket connection timeout');
+        resolve(false);
+      }, 10000);
+      
+      websocket.onopen = async () => {
+        clearTimeout(timeout);
+        console.log('[Background] WebSocket connected (ensured)');
+        await setState({ wsConnected: true });
+        reconnectAttempts = 0;
+        
+        // 发送注册消息
+        await sendRegisterMessage();
+        
+        // 启动心跳
+        startHeartbeat();
+        
+        resolve(true);
+      };
+      
+      websocket.onmessage = (event) => {
+        handleServerMessage(event.data);
+      };
+      
+      websocket.onclose = async (event) => {
+        clearTimeout(timeout);
+        console.log('[Background] WebSocket closed:', event.code, event.reason);
+        await setState({ wsConnected: false });
+        stopHeartbeat();
+        
+        // 自动重连
+        if (state.isEnabled && reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttempts++;
+          console.log(`[Background] Reconnecting... attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
+          setTimeout(connectWebSocket, CONFIG.RECONNECT_INTERVAL);
+        }
+      };
+      
+      websocket.onerror = (error) => {
+        clearTimeout(timeout);
+        console.error('[Background] WebSocket error:', error);
+        resolve(false);
+      };
+      
+    } catch (error) {
+      console.error('[Background] Failed to create WebSocket:', error);
+      resolve(false);
+    }
+  });
 }
 
 /**
@@ -440,9 +542,9 @@ function handleContentMessage(message, sender, sendResponse) {
       break;
       
     case 'tokenCaptured':
-      // Token捕获成功 - 异步处理，需要等待完成后再响应
+      // Token捕获成功 - 异步处理
       handleTokenCaptured(message.tokenInfo).then((result) => {
-        sendResponse(result || { success: true });
+        sendResponse({ success: true, ...result });
       }).catch((error) => {
         console.error('[Background] Token capture handling failed:', error);
         sendResponse({ success: false, error: error.message });
@@ -472,6 +574,13 @@ function handleContentMessage(message, sender, sendResponse) {
  */
 async function handleTokenCaptured(tokenInfo) {
   console.log('[Background] Token captured from:', tokenInfo.source);
+  
+  // 确保WebSocket已连接后再发送Token
+  const connected = await ensureWebSocketConnected();
+  if (!connected) {
+    console.error('[Background] Failed to connect WebSocket, cannot upload token');
+    return { success: false, error: 'WebSocket连接失败' };
+  }
   
   // 发送到服务器
   sendTokenUpload(tokenInfo);
@@ -569,6 +678,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'forceRefresh':
       handleForceRefresh().then(sendResponse);
       return true;
+    
+    case 'updateServerAddress':
+      handleUpdateServerAddress(message.address).then(sendResponse);
+      return true;
       
     default:
       sendResponse({ error: 'Unknown action' });
@@ -630,7 +743,7 @@ async function handleForceRefresh() {
   
   try {
     // 从服务器获取Token列表
-    const response = await fetch('http://localhost:8080/api/tokens?include_expired=true');
+    const response = await fetch(`http://${CONFIG.serverAddress}/api/tokens?include_expired=true`);
     if (response.ok) {
       const data = await response.json();
       const tokens = data.tokens || [];
@@ -662,6 +775,23 @@ async function handleForceRefresh() {
   }
   
   return getState();
+}
+
+/**
+ * 更新服务器地址
+ */
+async function handleUpdateServerAddress(address) {
+  console.log('[Background] Updating server address to:', address);
+  
+  CONFIG.serverAddress = address;
+  
+  // 如果当前已连接，断开并重连
+  if (state.isEnabled) {
+    disconnectWebSocket();
+    await connectWebSocket();
+  }
+  
+  return { success: true };
 }
 
 // ============== 初始化 ==============
