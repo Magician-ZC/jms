@@ -32,6 +32,7 @@ const state = {
     reconnectAttempts: 0,
     deleteTargetId: null,
     showExpired: true,
+    filterType: 'all',  // 账号类型筛选: all, agent, network
     heartbeatTimer: null,
     extensionId: null
 };
@@ -90,6 +91,9 @@ function initElements() {
     elements.cancelDelete = document.getElementById('cancel-delete');
     elements.confirmDelete = document.getElementById('confirm-delete');
     elements.toastContainer = document.getElementById('toast-container');
+    elements.filterAll = document.getElementById('filter-all');
+    elements.filterAgent = document.getElementById('filter-agent');
+    elements.filterNetwork = document.getElementById('filter-network');
 }
 
 function initEventListeners() {
@@ -111,9 +115,28 @@ function initEventListeners() {
         renderTokenList();
     });
     
+    // 账号类型筛选按钮
+    elements.filterAll.addEventListener('click', () => handleFilterChange('all'));
+    elements.filterAgent.addEventListener('click', () => handleFilterChange('agent'));
+    elements.filterNetwork.addEventListener('click', () => handleFilterChange('network'));
+    
     // 删除对话框
     elements.cancelDelete.addEventListener('click', hideDeleteDialog);
     elements.confirmDelete.addEventListener('click', confirmDeleteToken);
+}
+
+/**
+ * 处理账号类型筛选切换
+ */
+function handleFilterChange(type) {
+    state.filterType = type;
+    
+    // 更新按钮状态
+    elements.filterAll.classList.toggle('active', type === 'all');
+    elements.filterAgent.classList.toggle('active', type === 'agent');
+    elements.filterNetwork.classList.toggle('active', type === 'network');
+    
+    renderTokenList();
 }
 
 // ============== 认证相关 ==============
@@ -251,6 +274,13 @@ function updateStats() {
 function renderTokenList() {
     // 过滤Token
     let tokensToShow = state.tokens;
+    
+    // 按账号类型筛选
+    if (state.filterType !== 'all') {
+        tokensToShow = tokensToShow.filter(t => t.account_type === state.filterType);
+    }
+    
+    // 按过期状态筛选
     if (!state.showExpired) {
         tokensToShow = tokensToShow.filter(t => t.status === 'active');
     }
@@ -286,6 +316,14 @@ function createTokenCard(token) {
     // 获取用户名首字母
     const initial = displayName.charAt(0).toUpperCase();
     
+    // 账号类型显示
+    const accountTypeText = {
+        'agent': '代理区',
+        'network': '网点'
+    }[token.account_type] || '代理区';
+    
+    const accountTypeClass = token.account_type === 'network' ? 'type-network' : 'type-agent';
+    
     // 状态显示
     const statusText = {
         'active': '✓ 活跃',
@@ -305,6 +343,7 @@ function createTokenCard(token) {
                 <div class="user-details">
                     <h3>${escapeHtml(displayName)}</h3>
                     <span class="token-id">ID: ${token.id}</span>
+                    <span class="account-type ${accountTypeClass}">${accountTypeText}</span>
                 </div>
             </div>
             <span class="token-status ${token.status}">${statusText}</span>

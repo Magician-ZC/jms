@@ -21,6 +21,8 @@ const settingsPanel = document.getElementById('settingsPanel');
 const serverAddress = document.getElementById('serverAddress');
 const cancelSettings = document.getElementById('cancelSettings');
 const saveSettings = document.getElementById('saveSettings');
+const typeAgent = document.getElementById('typeAgent');
+const typeNetwork = document.getElementById('typeNetwork');
 
 // ============== 状态管理 ==============
 let currentState = {
@@ -29,7 +31,8 @@ let currentState = {
   wsConnected: false,
   lastTokenTime: null,
   tokenExpiredReason: null,
-  isAutoMonitoring: false
+  isAutoMonitoring: false,
+  accountType: 'agent'
 };
 
 // ============== 初始化 ==============
@@ -66,6 +69,37 @@ function bindEvents() {
   settingsBtn.addEventListener('click', showSettings);
   cancelSettings.addEventListener('click', hideSettings);
   saveSettings.addEventListener('click', handleSaveSettings);
+  
+  // 账号类型选择
+  typeAgent.addEventListener('click', () => handleTypeChange('agent'));
+  typeNetwork.addEventListener('click', () => handleTypeChange('network'));
+}
+
+/**
+ * 处理账号类型切换
+ */
+async function handleTypeChange(type) {
+  if (currentState.accountType === type) return;
+  
+  // 更新UI
+  typeAgent.classList.toggle('active', type === 'agent');
+  typeNetwork.classList.toggle('active', type === 'network');
+  
+  // 保存到storage
+  await chrome.storage.local.set({ accountType: type });
+  currentState.accountType = type;
+  
+  // 通知background更新
+  try {
+    const response = await chrome.runtime.sendMessage({ action: 'updateAccountType', accountType: type });
+    const typeName = type === 'agent' ? '代理区' : '网点';
+    showMessage(`已切换到${typeName}模式`, 'success');
+    
+    // 刷新状态显示（会获取新类型的Token状态）
+    await fetchState();
+  } catch (error) {
+    console.error('[Popup] Failed to update account type:', error);
+  }
 }
 
 /**
@@ -118,10 +152,21 @@ function updateUI(state) {
   // 更新最后更新时间
   updateLastUpdate(state.lastTokenTime);
   
+  // 更新账号类型选择
+  updateAccountTypeUI(state.accountType || 'agent');
+  
   // 如果Token失效，显示提示
   if (state.tokenExpiredReason && !state.hasToken) {
     showMessage('Token已失效: ' + state.tokenExpiredReason, 'warning');
   }
+}
+
+/**
+ * 更新账号类型UI
+ */
+function updateAccountTypeUI(type) {
+  typeAgent.classList.toggle('active', type === 'agent');
+  typeNetwork.classList.toggle('active', type === 'network');
 }
 
 /**

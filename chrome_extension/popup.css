@@ -57,6 +57,65 @@ body {
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
+/* 账号类型选择区域 */
+.type-section {
+  background: white;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.type-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.type-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.type-buttons {
+  display: flex;
+  gap: 4px;
+  background: #f0f0f0;
+  padding: 3px;
+  border-radius: 6px;
+}
+
+.type-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: transparent;
+  color: #666;
+}
+
+.type-btn:hover {
+  color: #333;
+}
+
+.type-btn.active {
+  background: white;
+  color: #4CAF50;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.type-btn.active[data-type="agent"] {
+  color: #1890ff;
+}
+
+.type-btn.active[data-type="network"] {
+  color: #fa8c16;
+}
+
 .switch-row {
   display: flex;
   align-items: center;

@@ -45,13 +45,38 @@ KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "300"))  # 秒，默�
 # 加密配置
 TOKEN_ENCRYPT_KEY = os.getenv("TOKEN_ENCRYPT_KEY", None)
 
-# JMS平台配置
+# ============== 代理区平台配置 (idata.jtexpress.com.cn) ==============
 JMS_LOGIN_URL = "https://jms.jtexpress.com.cn/login"
 JMS_INDEX_URL = "https://jms.jtexpress.com.cn/index"
 JMS_API_BASE_URL = "https://jmsgw.jtexpress.com.cn"
 
-# 保活配置 - 使用数据平台页面进行保活
+# ============== 网点平台配置 (wd.jtexpress.com.cn) ==============
+WD_LOGIN_URL = "https://wd.jtexpress.com.cn/login"
+WD_INDEX_URL = "https://wd.jtexpress.com.cn/indexSub"
+WD_API_BASE_URL = "https://wdgw.jtexpress.com.cn"
+
+# ============== 保活配置 ==============
+# 代理区保活 - 使用数据平台页面
 KEEP_ALIVE_URL = "https://idata.jtexpress.com.cn/indexSub"
+AGENT_KEEP_ALIVE_URL = KEEP_ALIVE_URL
+
+# 网点保活 - 使用轻量级API
+NETWORK_KEEP_ALIVE_URL = "https://wdgw.jtexpress.com.cn/reportgateway/networkIndex/indicator/query"
+NETWORK_KEEP_ALIVE_HEADERS = {
+    "Content-Type": "application/json;charset=UTF-8",
+    "Origin": "https://wd.jtexpress.com.cn",
+    "Referer": "https://wd.jtexpress.com.cn/",
+    "lang": "zh_CN",
+    "routeName": "indexSub",
+}
+# 网点保活请求体（简化版，只需要验证Token有效性）
+NETWORK_KEEP_ALIVE_BODY = {
+    "dateDimension": "M",
+    "dateType": 3,
+    "organization": "network",
+    "checkType": "head",
+    "countryId": "1",
+}
 
 # 管理界面密码（生产环境应使用环境变量）
 MANAGEMENT_PASSWORD = os.getenv("MANAGEMENT_PASSWORD", "admin123")

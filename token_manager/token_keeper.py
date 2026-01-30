@@ -18,8 +18,16 @@ from typing import Optional, List, Callable, Awaitable
 
 import httpx
 
-from .config import KEEP_ALIVE_INTERVAL, KEEP_ALIVE_URL, get_china_now
-from .models import Token, TokenStatus
+from .config import (
+    KEEP_ALIVE_INTERVAL, 
+    KEEP_ALIVE_URL, 
+    AGENT_KEEP_ALIVE_URL,
+    NETWORK_KEEP_ALIVE_URL,
+    NETWORK_KEEP_ALIVE_HEADERS,
+    NETWORK_KEEP_ALIVE_BODY,
+    get_china_now
+)
+from .models import Token, TokenStatus, AccountType
 from .token_service import TokenService, get_token_service
 from .crypto_utils import decrypt_token, mask_token
 from .websocket_manager import WebSocketManager, get_websocket_manager
@@ -238,8 +246,11 @@ class TokenKeeper:
                     # 解密Token
                     decrypted_token = decrypt_token(token.token_value)
                     
+                    # 获取账号类型
+                    account_type = token.account_type or AccountType.AGENT
+                    
                     # 执行保活
-                    is_valid = await self.keep_alive(token.id, decrypted_token)
+                    is_valid = await self.keep_alive(token.id, decrypted_token, account_type)
                     
                     if is_valid:
                         cycle_stats["success"] += 1
@@ -252,7 +263,7 @@ class TokenKeeper:
                         await self.notify_token_expired(token.user_id, "保活检测失败，Token已过期")
                         
                 except Exception as e:
-                    logger.error(f"Token保活失败: user_id={token.user_id}, error={str(e)}")
+                    logger.error(f"Token保活失败: user_id={token.user_id}, type={token.account_type}, error={str(e)}")
                     cycle_stats["failed"] += 1
                     self._stats["failed_checks"] += 1
             
@@ -273,37 +284,42 @@ class TokenKeeper:
             logger.error(f"保活循环执行失败: {str(e)}")
             raise TokenKeeperError(f"保活循环执行失败: {str(e)}")
     
-    async def keep_alive(self, token_id: int, token: str) -> bool:
+    async def keep_alive(self, token_id: int, token: str, account_type: AccountType = AccountType.AGENT) -> bool:
         """
         执行单个Token的保活操作
         
-        使用Token调用JMS平台的轻量级API接口，验证Token是否有效。
-        如果有效则更新最后活跃时间，如果无效则标记为过期。
+        根据账号类型使用不同的保活策略：
+        - 代理区(agent): 访问数据平台页面
+        - 网点(network): 调用轻量级API
         
         Args:
             token_id: Token ID
             token: 解密后的Token值
+            account_type: 账号类型
             
         Returns:
             bool: Token是否有效
             
         Requirements: 5.2, 5.3, 5.4
         """
-        logger.debug(f"执行Token保活: id={token_id}, token={mask_token(token)}")
+        logger.debug(f"执行Token保活: id={token_id}, type={account_type.value}, token={mask_token(token)}")
         
         try:
-            # 检查Token有效性
-            is_valid = await self.check_token_validity(token)
+            # 根据账号类型选择保活方式
+            if account_type == AccountType.NETWORK:
+                is_valid = await self.check_network_token_validity(token)
+            else:
+                is_valid = await self.check_token_validity(token)
             
             if is_valid:
                 # Token有效，更新最后活跃时间
                 self.token_service.update_last_active(token_id)
-                logger.info(f"Token保活成功: id={token_id}")
+                logger.info(f"Token保活成功: id={token_id}, type={account_type.value}")
                 return True
             else:
                 # Token无效，标记为过期
                 self.token_service.update_status(token_id, TokenStatus.EXPIRED)
-                logger.warning(f"Token已过期: id={token_id}")
+                logger.warning(f"Token已过期: id={token_id}, type={account_type.value}")
                 return False
                 
         except Exception as e:
@@ -313,7 +329,7 @@ class TokenKeeper:
     
     async def check_token_validity(self, token: str) -> bool:
         """
-        检查Token是否有效
+        检查代理区Token是否有效
         
         通过访问数据平台页面验证Token的有效性（模拟点击"数据平台"）
         
@@ -325,8 +341,7 @@ class TokenKeeper:
             
         Requirements: 5.2
         """
-        # 使用数据平台页面进行保活
-        api_url = KEEP_ALIVE_URL
+        api_url = AGENT_KEEP_ALIVE_URL
         
         headers = {
             "Authorization": f"Bearer {token}",
@@ -339,32 +354,104 @@ class TokenKeeper:
         
         try:
             response = await self.http_client.get(api_url, headers=headers)
-            
-            # 检查响应状态
-            if response.status_code == self.HTTP_UNAUTHORIZED:
-                logger.warning(f"Token认证失败(401): token={mask_token(token)}")
-                return False
-            
-            if response.status_code == self.HTTP_FORBIDDEN:
-                logger.warning(f"Token权限不足(403): token={mask_token(token)}")
-                return False
-            
-            # 2xx和3xx状态码表示Token有效（包括重定向）
-            if 200 <= response.status_code < 400:
-                logger.debug(f"Token验证成功: token={mask_token(token)}, status={response.status_code}")
-                return True
-            
-            # 其他状态码，记录日志但不认为Token失效
-            logger.warning(f"保活请求返回异常状态码: {response.status_code}")
-            return True  # 保守处理，不因API异常而标记Token失效
+            return self._check_response_validity(response, token)
             
         except httpx.TimeoutException:
-            logger.warning(f"保活请求超时: token={mask_token(token)}")
+            logger.warning(f"代理区保活请求超时: token={mask_token(token)}")
             return True  # 超时不认为Token失效
             
         except httpx.RequestError as e:
-            logger.error(f"保活请求失败: {str(e)}")
+            logger.error(f"代理区保活请求失败: {str(e)}")
             return True  # 网络错误不认为Token失效
+
+    async def check_network_token_validity(self, token: str) -> bool:
+        """
+        检查网点Token是否有效
+        
+        通过调用网点轻量级API验证Token的有效性
+        
+        Args:
+            token: Token值
+            
+        Returns:
+            bool: Token是否有效
+        """
+        api_url = NETWORK_KEEP_ALIVE_URL
+        
+        # 构建请求头
+        headers = {
+            **NETWORK_KEEP_ALIVE_HEADERS,
+            "authToken": token,  # 网点使用驼峰命名
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
+        
+        # 构建请求体（添加动态日期）
+        now = get_china_now()
+        body = {
+            **NETWORK_KEEP_ALIVE_BODY,
+            "startDate": now.strftime("%Y-%m-01"),
+            "endDate": now.strftime("%Y-%m-%d"),
+        }
+        
+        try:
+            response = await self.http_client.post(api_url, headers=headers, json=body)
+            
+            # 检查响应
+            if response.status_code == self.HTTP_UNAUTHORIZED:
+                logger.warning(f"网点Token认证失败(401): token={mask_token(token)}")
+                return False
+            
+            if response.status_code == self.HTTP_FORBIDDEN:
+                logger.warning(f"网点Token权限不足(403): token={mask_token(token)}")
+                return False
+            
+            # 检查业务响应
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    # 网点API返回 code=1 表示成功
+                    if data.get("code") == 1 or data.get("succ") is True:
+                        logger.debug(f"网点Token验证成功: token={mask_token(token)}")
+                        return True
+                    else:
+                        logger.warning(f"网点Token验证失败: code={data.get('code')}, msg={data.get('msg')}")
+                        return False
+                except Exception:
+                    pass
+            
+            # 2xx状态码但无法解析响应，保守处理
+            if 200 <= response.status_code < 300:
+                return True
+            
+            logger.warning(f"网点保活请求返回异常状态码: {response.status_code}")
+            return True  # 保守处理
+            
+        except httpx.TimeoutException:
+            logger.warning(f"网点保活请求超时: token={mask_token(token)}")
+            return True
+            
+        except httpx.RequestError as e:
+            logger.error(f"网点保活请求失败: {str(e)}")
+            return True
+
+    def _check_response_validity(self, response: httpx.Response, token: str) -> bool:
+        """检查HTTP响应判断Token有效性"""
+        if response.status_code == self.HTTP_UNAUTHORIZED:
+            logger.warning(f"Token认证失败(401): token={mask_token(token)}")
+            return False
+        
+        if response.status_code == self.HTTP_FORBIDDEN:
+            logger.warning(f"Token权限不足(403): token={mask_token(token)}")
+            return False
+        
+        if 200 <= response.status_code < 400:
+            logger.debug(f"Token验证成功: token={mask_token(token)}, status={response.status_code}")
+            return True
+        
+        logger.warning(f"保活请求返回异常状态码: {response.status_code}")
+        return True  # 保守处理
 
     async def notify_token_expired(self, user_id: str, reason: str = "Token已过期") -> bool:
         """

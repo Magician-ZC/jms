@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "JMS Token Manager",
-  "version": "1.0.0",
-  "description": "JMS平台Token自动获取与管理",
+  "version": "1.1.0",
+  "description": "JMS平台Token自动获取与管理 - 支持代理区和网点",
   "permissions": [
     "storage",
     "tabs"
@@ -10,6 +10,8 @@
   "host_permissions": [
     "https://jms.jtexpress.com.cn/*",
     "https://jmsgw.jtexpress.com.cn/*",
+    "https://wd.jtexpress.com.cn/*",
+    "https://wdgw.jtexpress.com.cn/*",
     "http://localhost:8080/*"
   ],
   "background": {
@@ -17,7 +19,10 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://jms.jtexpress.com.cn/*"],
+      "matches": [
+        "https://jms.jtexpress.com.cn/*",
+        "https://wd.jtexpress.com.cn/*"
+      ],
       "js": ["token_extractor.js", "content.js"],
       "run_at": "document_end"
     }
@@ -38,7 +43,10 @@
   "web_accessible_resources": [
     {
       "resources": ["token_extractor.js", "ws_client.js"],
-      "matches": ["https://jms.jtexpress.com.cn/*"]
+      "matches": [
+        "https://jms.jtexpress.com.cn/*",
+        "https://wd.jtexpress.com.cn/*"
+      ]
     }
   ]
 }

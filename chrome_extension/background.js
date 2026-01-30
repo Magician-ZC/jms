@@ -1,13 +1,6 @@
 /**
  * JMS Token Manager - Service Worker (Background Script)
- * 
- * 功能：
- * - WebSocket连接管理
- * - 与Content Script的消息通信
- * - 状态管理
- * - Token失效处理
- * 
- * Requirements: 1.2, 1.5, 6.3, 6.4, 6.5, 7.1, 7.2, 7.6
+ * 支持代理区(jms.jtexpress.com.cn)和网点(wd.jtexpress.com.cn)
  */
 
 // ============== 配置 ==============
@@ -17,27 +10,54 @@ const CONFIG = {
   get WS_SERVER_URL() {
     return `ws://${this.serverAddress}/ws`;
   },
-  serverAddress: DEFAULT_SERVER,  // 动态更新
-  HEARTBEAT_INTERVAL: 30000,  // 30秒心跳
-  RECONNECT_INTERVAL: 5000,   // 5秒重连间隔
-  MAX_RECONNECT_ATTEMPTS: 3,  // 最大重连次数
-  LOGIN_PAGE: 'https://jms.jtexpress.com.cn/login',
-  INDEX_PAGE: 'https://jms.jtexpress.com.cn/index',
+  serverAddress: DEFAULT_SERVER,
+  HEARTBEAT_INTERVAL: 30000,
+  RECONNECT_INTERVAL: 5000,
+  MAX_RECONNECT_ATTEMPTS: 3,
+  // 代理区配置
+  AGENT_LOGIN_PAGE: 'https://jms.jtexpress.com.cn/login',
+  AGENT_INDEX_PAGE: 'https://jms.jtexpress.com.cn/index',
+  // 网点配置
+  NETWORK_LOGIN_PAGE: 'https://wd.jtexpress.com.cn/login',
+  NETWORK_INDEX_PAGE: 'https://wd.jtexpress.com.cn/indexSub',
   // 失效处理配置
-  TOKEN_EXPIRED_REDIRECT_DELAY: 1500,  // Token失效后跳转延迟（毫秒）
-  AUTO_ENABLE_MONITORING_ON_EXPIRED: true  // Token失效后自动开启监听
+  TOKEN_EXPIRED_REDIRECT_DELAY: 1500,
+  AUTO_ENABLE_MONITORING_ON_EXPIRED: true
 };
 
 // ============== 状态管理 ==============
 let state = {
   isEnabled: false,           // 开关状态
-  hasToken: false,            // 是否有Token
   wsConnected: false,         // WebSocket连接状态
-  lastTokenTime: null,        // 最后Token获取时间
   extensionId: null,          // 插件唯一标识
   tokenExpiredReason: null,   // Token失效原因
-  isAutoMonitoring: false     // 是否处于自动监听状态（Token失效后）
+  isAutoMonitoring: false,    // 是否处于自动监听状态（Token失效后）
+  accountType: 'agent',       // 当前账号类型: agent(代理区) 或 network(网点)
+  // 按账号类型分别存储Token状态
+  tokenStatus: {
+    agent: { hasToken: false, lastTokenTime: null },
+    network: { hasToken: false, lastTokenTime: null }
+  }
 };
+
+// 兼容旧代码的getter
+Object.defineProperty(state, 'hasToken', {
+  get() { return state.tokenStatus[state.accountType]?.hasToken || false; },
+  set(val) { 
+    if (state.tokenStatus[state.accountType]) {
+      state.tokenStatus[state.accountType].hasToken = val;
+    }
+  }
+});
+
+Object.defineProperty(state, 'lastTokenTime', {
+  get() { return state.tokenStatus[state.accountType]?.lastTokenTime || null; },
+  set(val) {
+    if (state.tokenStatus[state.accountType]) {
+      state.tokenStatus[state.accountType].lastTokenTime = val;
+    }
+  }
+});
 
 let websocket = null;
 let heartbeatTimer = null;
@@ -57,10 +77,14 @@ async function getExtensionId() {
 // 初始化状态
 async function initState() {
   state.extensionId = await getExtensionId();
-  const stored = await chrome.storage.local.get(['isEnabled', 'hasToken', 'lastTokenTime', 'serverAddress']);
+  const stored = await chrome.storage.local.get(['isEnabled', 'serverAddress', 'accountType', 'tokenStatus']);
   state.isEnabled = stored.isEnabled || false;
-  state.hasToken = stored.hasToken || false;
-  state.lastTokenTime = stored.lastTokenTime || null;
+  state.accountType = stored.accountType || 'agent';
+  
+  // 加载按类型存储的Token状态
+  if (stored.tokenStatus) {
+    state.tokenStatus = stored.tokenStatus;
+  }
   
   // 加载服务器地址
   if (stored.serverAddress) {
@@ -69,22 +93,34 @@ async function initState() {
   
   console.log('[Background] State initialized:', state);
   console.log('[Background] Server address:', CONFIG.serverAddress);
+  console.log('[Background] Account type:', state.accountType);
+  console.log('[Background] Token status:', state.tokenStatus);
 }
 
 // 保存状态到storage
 async function saveState() {
   await chrome.storage.local.set({
     isEnabled: state.isEnabled,
-    hasToken: state.hasToken,
-    lastTokenTime: state.lastTokenTime,
     tokenExpiredReason: state.tokenExpiredReason,
-    isAutoMonitoring: state.isAutoMonitoring
+    isAutoMonitoring: state.isAutoMonitoring,
+    accountType: state.accountType,
+    tokenStatus: state.tokenStatus
   });
 }
 
 // 获取当前状态
 function getState() {
-  return { ...state };
+  const currentTokenStatus = state.tokenStatus[state.accountType] || { hasToken: false, lastTokenTime: null };
+  return {
+    isEnabled: state.isEnabled,
+    hasToken: currentTokenStatus.hasToken,
+    wsConnected: state.wsConnected,
+    lastTokenTime: currentTokenStatus.lastTokenTime,
+    extensionId: state.extensionId,
+    tokenExpiredReason: state.tokenExpiredReason,
+    isAutoMonitoring: state.isAutoMonitoring,
+    accountType: state.accountType
+  };
 }
 
 // 更新状态
@@ -292,17 +328,20 @@ async function sendRegisterMessage() {
  * 发送Token上报消息
  */
 async function sendTokenUpload(tokenInfo) {
-  // 确保extensionId已经初始化
   if (!state.extensionId) {
     state.extensionId = await getExtensionId();
   }
+  
+  // 优先使用tokenInfo中的accountType，否则使用state中的
+  const accountType = tokenInfo.accountType || state.accountType || 'agent';
   
   const message = {
     type: 'token_upload',
     payload: {
       token: tokenInfo.token,
       userId: tokenInfo.userId,
-      account: tokenInfo.account,  // 添加账号信息
+      account: tokenInfo.account,
+      accountType: accountType,
       source: tokenInfo.source,
       extensionId: state.extensionId
     },
@@ -585,13 +624,16 @@ async function handleTokenCaptured(tokenInfo) {
   // 发送到服务器
   sendTokenUpload(tokenInfo);
   
-  // 更新本地状态，清除失效原因
-  await setState({ 
-    hasToken: true, 
-    lastTokenTime: Date.now(),
-    tokenExpiredReason: null,
-    isAutoMonitoring: false
-  });
+  // 根据Token来源的账号类型更新对应状态
+  const tokenType = tokenInfo.accountType || state.accountType;
+  state.tokenStatus[tokenType] = {
+    hasToken: true,
+    lastTokenTime: Date.now()
+  };
+  state.tokenExpiredReason = null;
+  state.isAutoMonitoring = false;
+  
+  await saveState();
   
   // 广播状态更新
   broadcastStateUpdate();
@@ -632,7 +674,10 @@ function handlePageChanged(pageType, tab) {
  * 通知Content Script
  */
 async function notifyContentScript(message) {
-  const tabs = await chrome.tabs.query({ url: 'https://jms.jtexpress.com.cn/*' });
+  // 同时通知代理区和网点页面
+  const tabs = await chrome.tabs.query({ 
+    url: ['https://jms.jtexpress.com.cn/*', 'https://wd.jtexpress.com.cn/*'] 
+  });
   for (const tab of tabs) {
     try {
       await chrome.tabs.sendMessage(tab.id, message);
@@ -682,6 +727,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'updateServerAddress':
       handleUpdateServerAddress(message.address).then(sendResponse);
       return true;
+    
+    case 'updateAccountType':
+      handleUpdateAccountType(message.accountType).then(sendResponse);
+      return true;
       
     default:
       sendResponse({ error: 'Unknown action' });
@@ -700,19 +749,31 @@ async function handleToggleSwitch() {
   
   if (newEnabled) {
     // 开启
-    await setState({ isEnabled: true });
+    state.isEnabled = true;
+    await saveState();
     
     // 连接WebSocket
     await connectWebSocket();
     
-    // 检查是否需要跳转到登录页
-    if (!state.hasToken) {
+    // 检查当前账号类型是否有Token，没有则跳转到对应登录页
+    const currentTokenStatus = state.tokenStatus[state.accountType];
+    if (!currentTokenStatus || !currentTokenStatus.hasToken) {
+      // 根据账号类型选择登录页面
+      const loginPage = state.accountType === 'network' 
+        ? CONFIG.NETWORK_LOGIN_PAGE 
+        : CONFIG.AGENT_LOGIN_PAGE;
+      
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tabs.length > 0) {
         const currentUrl = tabs[0].url || '';
-        if (!currentUrl.includes('jms.jtexpress.com.cn/login')) {
-          // 跳转到登录页 (Requirements: 1.3)
-          await chrome.tabs.update(tabs[0].id, { url: CONFIG.LOGIN_PAGE });
+        // 检查是否已经在对应的登录页
+        const isOnLoginPage = state.accountType === 'network'
+          ? currentUrl.includes('wd.jtexpress.com.cn/login')
+          : currentUrl.includes('jms.jtexpress.com.cn/login');
+        
+        if (!isOnLoginPage) {
+          console.log('[Background] Redirecting to login page:', loginPage);
+          await chrome.tabs.update(tabs[0].id, { url: loginPage });
         }
       }
     }
@@ -722,7 +783,8 @@ async function handleToggleSwitch() {
     
   } else {
     // 关闭
-    await setState({ isEnabled: false });
+    state.isEnabled = false;
+    await saveState();
     
     // 断开WebSocket连接
     disconnectWebSocket();
@@ -748,27 +810,16 @@ async function handleForceRefresh() {
       const data = await response.json();
       const tokens = data.tokens || [];
       
-      // 检查是否有活跃的Token
-      const hasActiveToken = tokens.some(t => t.status === 'active');
+      // 按账号类型检查是否有活跃的Token
+      const hasAgentToken = tokens.some(t => t.status === 'active' && t.account_type === 'agent');
+      const hasNetworkToken = tokens.some(t => t.status === 'active' && t.account_type === 'network');
       
-      if (!hasActiveToken && state.hasToken) {
-        // 服务器没有Token但本地显示有，需要同步
-        console.log('[Background] Server has no token, clearing local state');
-        await setState({
-          hasToken: false,
-          lastTokenTime: null,
-          tokenExpiredReason: null
-        });
-      } else if (hasActiveToken && !state.hasToken) {
-        // 服务器有Token但本地显示没有，需要同步
-        console.log('[Background] Server has token, updating local state');
-        await setState({
-          hasToken: true,
-          lastTokenTime: Date.now()
-        });
-      }
+      // 更新状态
+      state.tokenStatus.agent.hasToken = hasAgentToken;
+      state.tokenStatus.network.hasToken = hasNetworkToken;
       
-      console.log('[Background] State refreshed, hasToken:', state.hasToken);
+      await saveState();
+      console.log('[Background] State refreshed, agent:', hasAgentToken, 'network:', hasNetworkToken);
     }
   } catch (error) {
     console.error('[Background] Failed to refresh state from server:', error);
@@ -792,6 +843,38 @@ async function handleUpdateServerAddress(address) {
   }
   
   return { success: true };
+}
+
+/**
+ * 更新账号类型
+ */
+async function handleUpdateAccountType(accountType) {
+  console.log('[Background] Updating account type to:', accountType);
+  
+  state.accountType = accountType;
+  await saveState();
+  
+  // 通知content script更新账号类型
+  notifyContentScript({ action: 'updateAccountType', accountType: accountType });
+  
+  // 如果监控已开启且当前类型没有Token，跳转到对应登录页
+  const currentTokenStatus = state.tokenStatus[accountType];
+  if (state.isEnabled && (!currentTokenStatus || !currentTokenStatus.hasToken)) {
+    const loginPage = accountType === 'network' 
+      ? CONFIG.NETWORK_LOGIN_PAGE 
+      : CONFIG.AGENT_LOGIN_PAGE;
+    
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs.length > 0) {
+      console.log('[Background] No token for', accountType, ', redirecting to:', loginPage);
+      await chrome.tabs.update(tabs[0].id, { url: loginPage });
+    }
+  }
+  
+  // 广播状态更新（会返回新类型的Token状态）
+  broadcastStateUpdate();
+  
+  return { success: true, accountType: accountType };
 }
 
 // ============== 初始化 ==============
@@ -822,15 +905,13 @@ chrome.runtime.onInstalled.addListener((details) => {
 // 监听标签页更新，用于检测页面跳转
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete' && tab.url) {
-    if (tab.url.includes('jms.jtexpress.com.cn')) {
-      // JMS页面加载完成，通知Content Script
+    // 支持代理区和网点页面
+    if (tab.url.includes('jms.jtexpress.com.cn') || tab.url.includes('wd.jtexpress.com.cn')) {
       chrome.tabs.sendMessage(tabId, { 
         action: 'pageLoaded',
         isEnabled: state.isEnabled,
         hasToken: state.hasToken
-      }).catch(() => {
-        // Content Script可能还未加载
-      });
+      }).catch(() => {});
     }
   }
 });

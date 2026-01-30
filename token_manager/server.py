@@ -67,6 +67,7 @@ class TokenCreate(BaseModel):
     user_id: str = Field(..., min_length=1, description="用户标识")
     extension_id: Optional[str] = Field(None, description="插件标识")
     account: Optional[str] = Field(None, description="登录账号")
+    account_type: Optional[str] = Field(None, description="账号类型: agent(代理区) 或 network(网点)")
 
 
 class TokenResponse(BaseModel):
@@ -74,6 +75,7 @@ class TokenResponse(BaseModel):
     id: int
     user_id: str
     account: Optional[str]  # 登录账号
+    account_type: str  # 账号类型: agent 或 network
     token_masked: str  # 脱敏后的Token
     status: str
     extension_id: Optional[str]
@@ -187,10 +189,16 @@ def token_to_response(token) -> TokenResponse:
         logger.warning(f"Token解密失败: id={token.id}, error={str(e)}")
         token_masked = "[解密失败-密钥不匹配]"
     
+    # 获取账号类型
+    account_type_value = "agent"
+    if token.account_type:
+        account_type_value = token.account_type.value if hasattr(token.account_type, 'value') else str(token.account_type)
+    
     return TokenResponse(
         id=token.id,
         user_id=token.user_id,
         account=token.account,
+        account_type=account_type_value,
         token_masked=token_masked,
         status=token.status.value if isinstance(token.status, TokenStatus) else token.status,
         extension_id=token.extension_id,
@@ -250,9 +258,10 @@ async def create_or_update_token(
             token=data.token,
             user_id=data.user_id,
             extension_id=data.extension_id,
-            account=data.account
+            account=data.account,
+            account_type=data.account_type
         )
-        logger.info(f"Token创建/更新成功: user_id={data.user_id}, account={data.account}")
+        logger.info(f"Token创建/更新成功: user_id={data.user_id}, account={data.account}, type={data.account_type}")
         return token_to_response(token)
     except TokenValidationError as e:
         logger.warning(f"Token验证失败: {str(e)}")
@@ -462,13 +471,15 @@ async def handle_websocket_message(
             token_value = payload["token"]
             user_id = payload["userId"]
             account = payload.get("account")  # 获取账号信息
+            account_type = payload.get("accountType")  # 获取账号类型
             
             try:
                 token = service.create_or_update(
                     token=token_value,
                     user_id=user_id,
                     extension_id=extension_id,
-                    account=account
+                    account=account,
+                    account_type=account_type
                 )
                 
                 # 关联用户ID到连接
@@ -479,7 +490,7 @@ async def handle_websocket_message(
                     token_id=token.id,
                     message="Token已保存"
                 ))
-                logger.info(f"Token上报成功: user_id={user_id}, account={account}, extension_id={extension_id}")
+                logger.info(f"Token上报成功: user_id={user_id}, account={account}, type={account_type}, extension_id={extension_id}")
                 
             except TokenValidationError as e:
                 await websocket.send_json(create_token_ack_message(
@@ -574,6 +585,7 @@ async def download_false_sign_report(
     下载虚假签收报表
     
     使用指定Token的凭证下载虚假签收报表Excel文件
+    根据Token的账号类型自动选择代理区或网点API
     
     Args:
         token_id: Token ID
@@ -603,6 +615,11 @@ async def download_false_sign_report(
         # 解密Token
         decrypted_token = decrypt_token(token.token_value)
         
+        # 获取账号类型
+        account_type = "agent"
+        if token.account_type:
+            account_type = token.account_type.value if hasattr(token.account_type, 'value') else str(token.account_type)
+        
         # 确定日期
         target_date = None
         if data and data.date:
@@ -610,20 +627,20 @@ async def download_false_sign_report(
         else:
             target_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         
-        # 调用虚假签收模块
+        # 调用虚假签收模块，传入账号类型
         from modules.false_sign import FalseSignModule
         
-        module = FalseSignModule(authtoken=decrypted_token)
+        module = FalseSignModule(authtoken=decrypted_token, account_type=account_type)
         output_path = module.export_excel(date=target_date)
         
         if not output_path or not os.path.exists(output_path):
-            # 无数据时返回JSON响应而不是错误
             return JSONResponse(
                 status_code=200,
                 content={
                     "success": False,
                     "message": f"日期 {target_date} 无虚假签收数据",
-                    "date": target_date
+                    "date": target_date,
+                    "account_type": account_type
                 }
             )
         

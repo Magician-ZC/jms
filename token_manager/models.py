@@ -23,6 +23,12 @@ class TokenStatus(enum.Enum):
     INVALID = "invalid"
 
 
+class AccountType(enum.Enum):
+    """账号类型枚举"""
+    AGENT = "agent"      # 代理区账号 (idata.jtexpress.com.cn)
+    NETWORK = "network"  # 网点账号 (wd.jtexpress.com.cn)
+
+
 class Token(Base):
     """Token数据模型"""
     __tablename__ = "tokens"
@@ -30,6 +36,7 @@ class Token(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String(64), unique=True, nullable=False, index=True)
     account = Column(String(64), nullable=True)  # 登录账号
+    account_type = Column(Enum(AccountType), default=AccountType.AGENT)  # 账号类型
     token_value = Column(String(512), nullable=False)  # 加密存储
     status = Column(Enum(TokenStatus), default=TokenStatus.ACTIVE)
     extension_id = Column(String(64), nullable=True)
@@ -38,7 +45,7 @@ class Token(Base):
     last_active_at = Column(DateTime, nullable=True)
     
     def __repr__(self):
-        return f"<Token(id={self.id}, user_id={self.user_id}, status={self.status.value})>"
+        return f"<Token(id={self.id}, user_id={self.user_id}, type={self.account_type.value if self.account_type else 'agent'}, status={self.status.value})>"
     
     def to_dict(self) -> dict:
         """转换为字典"""
@@ -46,6 +53,7 @@ class Token(Base):
             "id": self.id,
             "user_id": self.user_id,
             "account": self.account,
+            "account_type": self.account_type.value if self.account_type else "agent",
             "token_value": self.token_value,
             "status": self.status.value,
             "extension_id": self.extension_id,

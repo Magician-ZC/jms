@@ -10,7 +10,7 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from .models import Token, TokenStatus, get_db_session, init_database
+from .models import Token, TokenStatus, AccountType, get_db_session, init_database
 from .crypto_utils import encrypt_token, decrypt_token, mask_token
 from .validators import validate_token, validate_user_id
 from .config import get_china_now
@@ -78,7 +78,8 @@ class TokenService:
         token: str,
         user_id: str,
         extension_id: Optional[str] = None,
-        account: Optional[str] = None
+        account: Optional[str] = None,
+        account_type: Optional[str] = None
     ) -> Token:
         """
         创建或更新Token（幂等存储）
@@ -91,6 +92,7 @@ class TokenService:
             user_id: 用户标识
             extension_id: 可选的插件标识
             account: 可选的登录账号
+            account_type: 可选的账号类型 ("agent" 或 "network")
             
         Returns:
             Token: 创建或更新后的Token对象
@@ -119,6 +121,14 @@ class TokenService:
             # user_id 使用 account 的值
             user_id = account
         
+        # 解析账号类型
+        token_account_type = AccountType.AGENT  # 默认代理区
+        if account_type:
+            try:
+                token_account_type = AccountType(account_type.lower())
+            except ValueError:
+                logger.warning(f"未知的账号类型: {account_type}, 使用默认值 agent")
+        
         try:
             # 加密Token
             encrypted_token = encrypt_token(token)
@@ -135,16 +145,18 @@ class TokenService:
                 existing.token_value = encrypted_token
                 existing.status = TokenStatus.ACTIVE
                 existing.extension_id = extension_id
+                existing.account_type = token_account_type
                 if account:
                     existing.account = account
                 existing.updated_at = get_china_now()
-                logger.info(f"更新Token: user_id={user_id}, account={account}, token={mask_token(token)}")
+                logger.info(f"更新Token: user_id={user_id}, account={account}, type={token_account_type.value}, token={mask_token(token)}")
             else:
                 # 创建新记录
                 now = get_china_now()
                 existing = Token(
                     user_id=user_id,
                     account=account,
+                    account_type=token_account_type,
                     token_value=encrypted_token,
                     status=TokenStatus.ACTIVE,
                     extension_id=extension_id,
@@ -152,7 +164,7 @@ class TokenService:
                     updated_at=now
                 )
                 self.session.add(existing)
-                logger.info(f"创建Token: user_id={user_id}, account={account}, token={mask_token(token)}")
+                logger.info(f"创建Token: user_id={user_id}, account={account}, type={token_account_type.value}, token={mask_token(token)}")
             
             self.session.commit()
             self.session.refresh(existing)
