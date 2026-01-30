@@ -56,12 +56,20 @@ WD_INDEX_URL = "https://wd.jtexpress.com.cn/indexSub"
 WD_API_BASE_URL = "https://wdgw.jtexpress.com.cn"
 
 # ============== 保活配置 ==============
-# 代理区保活 - 使用数据平台页面
-KEEP_ALIVE_URL = "https://idata.jtexpress.com.cn/indexSub"
-AGENT_KEEP_ALIVE_URL = KEEP_ALIVE_URL
+# 代理区保活 - 使用 checkToken API (来自保活.har)
+AGENT_KEEP_ALIVE_URL = "https://jmsgw.jtexpress.com.cn/webOauth/checkToken"
+AGENT_KEEP_ALIVE_HEADERS = {
+    "Origin": "https://jms.jtexpress.com.cn",
+    "Referer": "https://jms.jtexpress.com.cn/",
+    "lang": "zh_CN",
+}
+# 代理区保活使用 GET 请求，无需请求体
+AGENT_KEEP_ALIVE_BODY = None
+# 兼容旧配置
+KEEP_ALIVE_URL = AGENT_KEEP_ALIVE_URL
 
-# 网点保活 - 使用轻量级API
-NETWORK_KEEP_ALIVE_URL = "https://wdgw.jtexpress.com.cn/reportgateway/networkIndex/indicator/query"
+# 网点保活 - 使用首页未揽收统计API (来自保活.har，不需要networkCode)
+NETWORK_KEEP_ALIVE_URL = "https://wdgw.jtexpress.com.cn/servicedocumentary/outBound/notCollectCount"
 NETWORK_KEEP_ALIVE_HEADERS = {
     "Content-Type": "application/json;charset=UTF-8",
     "Origin": "https://wd.jtexpress.com.cn",
@@ -69,12 +77,10 @@ NETWORK_KEEP_ALIVE_HEADERS = {
     "lang": "zh_CN",
     "routeName": "indexSub",
 }
-# 网点保活请求体（简化版，只需要验证Token有效性）
+# 网点保活请求体 - 使用未揽收统计查询（不需要networkCode）
 NETWORK_KEEP_ALIVE_BODY = {
-    "dateDimension": "M",
-    "dateType": 3,
-    "organization": "network",
-    "checkType": "head",
+    "current": 1,
+    "size": 10,
     "countryId": "1",
 }
 

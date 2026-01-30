@@ -363,6 +363,11 @@ function createTokenCard(token) {
                     📊 虚假签收报表
                 </button>
                 ` : ''}
+                ${token.status === 'active' && token.account_type === 'agent' ? `
+                <button class="btn btn-success btn-sm" onclick="showWaybillDownloadDialog(${token.id}, '${escapeHtml(token.account || token.user_id)}')" title="寄件运单下载">
+                    📦 寄件运单下载
+                </button>
+                ` : ''}
                 <button class="btn btn-danger btn-sm" onclick="showDeleteDialog(${token.id}, '${escapeHtml(token.user_id)}')">
                     🗑️ 删除
                 </button>
@@ -681,3 +686,433 @@ async function downloadFalseSignReport(tokenId, userName) {
 }
 
 window.downloadFalseSignReport = downloadFalseSignReport;
+
+// ============== 寄件运单下载功能 ==============
+
+// 任务中心状态
+const taskCenterState = {
+    tasks: [],
+    isVisible: false,
+    refreshTimer: null
+};
+
+/**
+ * 显示寄件运单下载对话框
+ */
+function showWaybillDownloadDialog(tokenId, userName) {
+    // 设置默认日期为昨天
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dateStr = yesterday.toISOString().split('T')[0];
+    
+    document.getElementById('waybill-token-id').value = tokenId;
+    document.getElementById('waybill-start-date').value = dateStr;
+    document.getElementById('waybill-end-date').value = dateStr;
+    document.getElementById('waybill-user-name').textContent = userName;
+    document.getElementById('waybill-dialog').style.display = 'flex';
+}
+
+/**
+ * 隐藏寄件运单下载对话框
+ */
+function hideWaybillDownloadDialog() {
+    document.getElementById('waybill-dialog').style.display = 'none';
+}
+
+/**
+ * 提交寄件运单下载任务
+ */
+async function submitWaybillDownloadTask() {
+    const tokenId = document.getElementById('waybill-token-id').value;
+    const startDate = document.getElementById('waybill-start-date').value;
+    const endDate = document.getElementById('waybill-end-date').value;
+    
+    if (!startDate || !endDate) {
+        showToast('请选择日期范围', 'error');
+        return;
+    }
+    
+    if (new Date(startDate) > new Date(endDate)) {
+        showToast('开始日期不能大于结束日期', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${CONFIG.API_BASE_URL}/api/waybill-download/${tokenId}/submit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                start_date: startDate,
+                end_date: endDate
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok || !data.success) {
+            throw new Error(data.detail || data.message || '提交任务失败');
+        }
+        
+        showToast(`已创建${data.total_tasks}个下载子任务，请在任务中心查看进度`, 'success');
+        hideWaybillDownloadDialog();
+        
+        // 显示任务中心
+        showTaskCenter();
+        refreshTaskList();
+        
+    } catch (error) {
+        console.error('提交寄件运单下载任务失败:', error);
+        showToast(`提交失败: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * 显示/隐藏任务中心
+ */
+function toggleTaskCenter() {
+    if (taskCenterState.isVisible) {
+        hideTaskCenter();
+    } else {
+        showTaskCenter();
+    }
+}
+
+function showTaskCenter() {
+    taskCenterState.isVisible = true;
+    document.getElementById('task-center').classList.add('visible');
+    refreshTaskList();
+    
+    // 启动自动刷新
+    if (!taskCenterState.refreshTimer) {
+        taskCenterState.refreshTimer = setInterval(refreshTaskList, 10000);
+    }
+}
+
+function hideTaskCenter() {
+    taskCenterState.isVisible = false;
+    document.getElementById('task-center').classList.remove('visible');
+    
+    // 停止自动刷新
+    if (taskCenterState.refreshTimer) {
+        clearInterval(taskCenterState.refreshTimer);
+        taskCenterState.refreshTimer = null;
+    }
+}
+
+/**
+ * 刷新任务列表
+ */
+async function refreshTaskList() {
+    try {
+        const response = await fetch(`${CONFIG.API_BASE_URL}/api/waybill-download/tasks`);
+        const data = await response.json();
+        
+        taskCenterState.tasks = data.tasks || [];
+        renderTaskList();
+        updateTaskBadge();
+        
+    } catch (error) {
+        console.error('刷新任务列表失败:', error);
+    }
+}
+
+/**
+ * 渲染任务列表
+ */
+function renderTaskList() {
+    const container = document.getElementById('task-list');
+    
+    if (taskCenterState.tasks.length === 0) {
+        container.innerHTML = '<div class="task-empty">暂无下载任务</div>';
+        return;
+    }
+    
+    container.innerHTML = taskCenterState.tasks.map(task => {
+        const statusText = {
+            'pending': '等待中',
+            'running': '进行中',
+            'completed': '已完成',
+            'partial': '部分完成',
+            'failed': '失败'
+        }[task.status] || task.status;
+        
+        const statusClass = {
+            'pending': 'pending',
+            'running': 'running',
+            'completed': 'completed',
+            'partial': 'partial',
+            'failed': 'failed'
+        }[task.status] || '';
+        
+        const progress = task.total_count > 0 
+            ? Math.round((task.completed_count / task.total_count) * 100) 
+            : 0;
+        
+        return `
+            <div class="task-item ${statusClass}">
+                <div class="task-header">
+                    <span class="task-user">${escapeHtml(task.user_name)}</span>
+                    <span class="task-status ${statusClass}">${statusText}</span>
+                </div>
+                <div class="task-info">
+                    <span>${task.start_date} ~ ${task.end_date}</span>
+                </div>
+                <div class="task-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${progress}%"></div>
+                    </div>
+                    <span class="progress-text">${task.completed_count}/${task.total_count}</span>
+                </div>
+                <div class="task-actions">
+                    ${task.downloaded_files > 0 ? `
+                        <button class="btn btn-sm btn-primary" onclick="viewTaskFiles('${task.task_id}')">
+                            📁 查看文件(${task.downloaded_files})
+                        </button>
+                    ` : ''}
+                    <button class="btn btn-sm btn-outline" onclick="viewTaskDetail('${task.task_id}')">
+                        详情
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteTask('${task.task_id}')">
+                        删除
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * 更新任务徽章
+ */
+function updateTaskBadge() {
+    const badge = document.getElementById('task-badge');
+    const runningCount = taskCenterState.tasks.filter(t => t.status === 'running').length;
+    
+    if (runningCount > 0) {
+        badge.textContent = runningCount;
+        badge.style.display = 'flex';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+/**
+ * 查看任务详情
+ */
+async function viewTaskDetail(taskId) {
+    try {
+        const response = await fetch(`${CONFIG.API_BASE_URL}/api/waybill-download/tasks/${taskId}`);
+        const task = await response.json();
+        
+        // 子任务状态映射
+        const statusMap = {
+            'pending': '等待中',
+            'submitted': '已提交',
+            'completed': '已完成',
+            'failed': '任务失败',
+            'download_failed': '下载失败'
+        };
+        
+        // 检查是否有失败的子任务
+        const hasFailedTasks = task.sub_tasks.some(st => st.status.includes('failed'));
+        const isRunning = task.status === 'running';
+        
+        // 显示详情对话框
+        const detailHtml = `
+            <h4>任务详情: ${escapeHtml(task.user_name)}</h4>
+            <p>日期范围: ${task.start_date} ~ ${task.end_date}</p>
+            <p>状态: ${task.status} (${task.completed_count}/${task.total_count})</p>
+            <div class="sub-task-list">
+                ${task.sub_tasks.map(st => `
+                    <div class="sub-task-item ${st.status}">
+                        <span class="sub-task-name">${st.period} ${st.date}</span>
+                        <span class="sub-task-status">${statusMap[st.status] || st.status}</span>
+                        ${st.error ? `<span class="sub-task-error">${st.error}</span>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+            ${(hasFailedTasks || task.status === 'partial') && !isRunning ? `
+                <div class="task-detail-actions">
+                    <button class="btn btn-primary" onclick="retryTask('${task.task_id}')">
+                        🔄 重试失败任务
+                    </button>
+                </div>
+            ` : ''}
+        `;
+        
+        document.getElementById('task-detail-content').innerHTML = detailHtml;
+        document.getElementById('task-detail-dialog').style.display = 'flex';
+        
+    } catch (error) {
+        showToast('获取任务详情失败', 'error');
+    }
+}
+
+/**
+ * 重试任务
+ */
+async function retryTask(taskId) {
+    try {
+        showToast('正在重试任务...', 'info');
+        
+        const response = await fetch(`${CONFIG.API_BASE_URL}/api/waybill-download/tasks/${taskId}/retry`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+            showToast('重试任务已启动', 'success');
+            hideTaskDetailDialog();
+            // 刷新任务列表
+            await loadTaskList();
+        } else {
+            throw new Error(data.detail || data.message || '重试失败');
+        }
+    } catch (error) {
+        console.error('重试任务失败:', error);
+        showToast(`重试失败: ${error.message}`, 'error');
+    }
+}
+
+function hideTaskDetailDialog() {
+    document.getElementById('task-detail-dialog').style.display = 'none';
+}
+
+/**
+ * 查看任务文件
+ */
+async function viewTaskFiles(taskId) {
+    try {
+        const response = await fetch(`${CONFIG.API_BASE_URL}/api/waybill-download/tasks/${taskId}`);
+        const task = await response.json();
+        
+        if (!task.downloaded_files || task.downloaded_files.length === 0) {
+            showToast('暂无已下载的文件', 'info');
+            return;
+        }
+        
+        const filesHtml = task.downloaded_files.map(file => `
+            <div class="file-item">
+                <span class="file-name">${escapeHtml(file.filename)}</span>
+                <a href="${CONFIG.API_BASE_URL}/api/waybill-download/tasks/${taskId}/files/${encodeURIComponent(file.filename)}" 
+                   class="btn btn-sm btn-primary" download>
+                    下载
+                </a>
+            </div>
+        `).join('');
+        
+        document.getElementById('task-detail-content').innerHTML = `
+            <h4>已下载文件</h4>
+            <div class="file-list">${filesHtml}</div>
+        `;
+        document.getElementById('task-detail-dialog').style.display = 'flex';
+        
+    } catch (error) {
+        showToast('获取文件列表失败', 'error');
+    }
+}
+
+/**
+ * 删除任务
+ */
+async function deleteTask(taskId) {
+    if (!confirm('确定要删除此任务吗？')) return;
+    
+    try {
+        const response = await fetch(`${CONFIG.API_BASE_URL}/api/waybill-download/tasks/${taskId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            showToast('任务已删除', 'success');
+            refreshTaskList();
+        } else {
+            throw new Error('删除失败');
+        }
+    } catch (error) {
+        showToast('删除任务失败', 'error');
+    }
+}
+
+// 暴露全局函数
+window.showWaybillDownloadDialog = showWaybillDownloadDialog;
+window.hideWaybillDownloadDialog = hideWaybillDownloadDialog;
+window.submitWaybillDownloadTask = submitWaybillDownloadTask;
+window.toggleTaskCenter = toggleTaskCenter;
+window.hideTaskCenter = hideTaskCenter;
+window.viewTaskDetail = viewTaskDetail;
+window.viewTaskFiles = viewTaskFiles;
+window.deleteTask = deleteTask;
+window.hideTaskDetailDialog = hideTaskDetailDialog;
+
+
+// ============== Chrome插件更新功能 ==============
+
+/**
+ * 在线更新Chrome插件
+ */
+async function updateExtension() {
+    if (!confirm('确定要从GitHub更新Chrome插件代码吗？\n\n更新后需要在Chrome扩展管理页面重新加载插件。')) {
+        return;
+    }
+    
+    showToast('正在更新插件代码...', 'info');
+    
+    try {
+        const response = await fetch(`${CONFIG.API_BASE_URL}/api/extension/update`, {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok || !data.success) {
+            throw new Error(data.detail || data.message || '更新失败');
+        }
+        
+        showToast(`插件更新成功！已更新 ${data.updated_files} 个文件`, 'success');
+        
+        // 显示更新详情
+        if (data.files && data.files.length > 0) {
+            console.log('更新的文件:', data.files);
+        }
+        
+    } catch (error) {
+        console.error('更新插件失败:', error);
+        showToast(`更新失败: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * 下载Chrome插件压缩包
+ */
+async function downloadExtension() {
+    showToast('正在打包插件...', 'info');
+    
+    try {
+        const response = await fetch(`${CONFIG.API_BASE_URL}/api/extension/download`);
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || '下载失败');
+        }
+        
+        // 下载文件
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'chrome_extension.zip';
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+        
+        showToast('插件下载成功', 'success');
+    } catch (error) {
+        console.error('下载插件失败:', error);
+        showToast(`下载失败: ${error.message}`, 'error');
+    }
+}
+
+window.updateExtension = updateExtension;
+window.downloadExtension = downloadExtension;

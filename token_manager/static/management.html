@@ -101,7 +101,18 @@
         </main>
 
         <footer class="footer">
-            <p>Token Management System v1.0.0</p>
+            <div class="footer-content">
+                <div class="extension-section">
+                    <span class="extension-label">🧩 Chrome插件</span>
+                    <button id="update-extension-btn" class="btn btn-sm btn-outline" onclick="updateExtension()">
+                        🔄 在线更新
+                    </button>
+                    <button id="download-extension-btn" class="btn btn-sm btn-outline" onclick="downloadExtension()">
+                        📥 下载插件
+                    </button>
+                </div>
+                <p>Token Management System v1.0.0</p>
+            </div>
         </footer>
     </div>
 
@@ -117,6 +128,55 @@
             </div>
         </div>
     </div>
+
+    <!-- 寄件运单下载对话框 -->
+    <div id="waybill-dialog" class="dialog-overlay" style="display: none;">
+        <div class="dialog waybill-dialog">
+            <h3>📦 寄件运单下载</h3>
+            <p>为用户 <strong id="waybill-user-name"></strong> 下载寄件运单</p>
+            <input type="hidden" id="waybill-token-id">
+            <div class="form-group">
+                <label>录入开始日期：</label>
+                <input type="date" id="waybill-start-date" class="form-input">
+            </div>
+            <div class="form-group">
+                <label>录入结束日期：</label>
+                <input type="date" id="waybill-end-date" class="form-input">
+            </div>
+            <p class="hint-text">每天将拆分为4个时间段下载：0-14点、14-18点、18-21点、21-24点</p>
+            <div class="dialog-actions">
+                <button onclick="hideWaybillDownloadDialog()" class="btn btn-secondary">关闭</button>
+                <button onclick="submitWaybillDownloadTask()" class="btn btn-primary">提交下载任务</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 任务详情对话框 -->
+    <div id="task-detail-dialog" class="dialog-overlay" style="display: none;">
+        <div class="dialog task-detail-dialog">
+            <div id="task-detail-content"></div>
+            <div class="dialog-actions">
+                <button onclick="hideTaskDetailDialog()" class="btn btn-secondary">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 悬浮任务中心 -->
+    <div id="task-center" class="task-center">
+        <div class="task-center-header">
+            <span>📋 任务中心</span>
+            <button class="task-center-close" onclick="hideTaskCenter()">×</button>
+        </div>
+        <div id="task-list" class="task-list">
+            <div class="task-empty">暂无下载任务</div>
+        </div>
+    </div>
+
+    <!-- 任务中心悬浮按钮 -->
+    <button id="task-center-btn" class="task-center-btn" onclick="toggleTaskCenter()">
+        📋
+        <span id="task-badge" class="task-badge" style="display: none;">0</span>
+    </button>
 
     <!-- Toast通知 -->
     <div id="toast-container" class="toast-container"></div>

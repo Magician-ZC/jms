@@ -13,7 +13,7 @@ Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 6.1
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Callable, Awaitable
 
 import httpx
@@ -22,6 +22,7 @@ from .config import (
     KEEP_ALIVE_INTERVAL, 
     KEEP_ALIVE_URL, 
     AGENT_KEEP_ALIVE_URL,
+    AGENT_KEEP_ALIVE_HEADERS,
     NETWORK_KEEP_ALIVE_URL,
     NETWORK_KEEP_ALIVE_HEADERS,
     NETWORK_KEEP_ALIVE_BODY,
@@ -331,7 +332,7 @@ class TokenKeeper:
         """
         检查代理区Token是否有效
         
-        通过访问数据平台页面验证Token的有效性（模拟点击"数据平台"）
+        通过调用 checkToken API 验证Token的有效性（来自保活.har）
         
         Args:
             token: Token值
@@ -343,18 +344,45 @@ class TokenKeeper:
         """
         api_url = AGENT_KEEP_ALIVE_URL
         
+        # 构建请求头 - 代理区使用 authtoken (小写)
         headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
+            **AGENT_KEEP_ALIVE_HEADERS,
+            "authtoken": token,
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept": "application/json, text/plain, */*",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Referer": "https://jms.jtexpress.com.cn/"
         }
         
         try:
             response = await self.http_client.get(api_url, headers=headers)
-            return self._check_response_validity(response, token)
+            
+            # 检查响应
+            if response.status_code == self.HTTP_UNAUTHORIZED:
+                logger.warning(f"代理区Token认证失败(401): token={mask_token(token)}")
+                return False
+            
+            if response.status_code == self.HTTP_FORBIDDEN:
+                logger.warning(f"代理区Token权限不足(403): token={mask_token(token)}")
+                return False
+            
+            # 检查业务响应
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    # checkToken API 返回 code=1 表示Token有效
+                    if data.get("code") == 1 or data.get("succ") is True:
+                        logger.debug(f"代理区Token验证成功: token={mask_token(token)}")
+                        return True
+                    else:
+                        msg = data.get("msg", "")
+                        logger.warning(f"代理区Token已失效: code={data.get('code')}, msg={msg}")
+                        return False
+                except Exception as e:
+                    logger.warning(f"解析响应失败: {str(e)}")
+            
+            # 非200状态码
+            logger.warning(f"代理区保活请求返回异常状态码: {response.status_code}")
+            return True  # 保守处理
             
         except httpx.TimeoutException:
             logger.warning(f"代理区保活请求超时: token={mask_token(token)}")
@@ -368,7 +396,7 @@ class TokenKeeper:
         """
         检查网点Token是否有效
         
-        通过调用网点轻量级API验证Token的有效性
+        通过调用网点首页未揽收统计API验证Token的有效性
         
         Args:
             token: Token值
@@ -389,10 +417,11 @@ class TokenKeeper:
         
         # 构建请求体（添加动态日期）
         now = get_china_now()
+        yesterday = now - timedelta(days=1)
         body = {
             **NETWORK_KEEP_ALIVE_BODY,
-            "startDate": now.strftime("%Y-%m-01"),
-            "endDate": now.strftime("%Y-%m-%d"),
+            "startTime": yesterday.strftime("%Y-%m-%d 00:00:00"),
+            "endTime": yesterday.strftime("%Y-%m-%d 23:59:59"),
         }
         
         try:

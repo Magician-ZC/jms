@@ -32,6 +32,31 @@ let isMonitoring = false;
 let currentConfig = null;
 let tokenExtractor = null;
 
+// ============== 工具函数 ==============
+
+/**
+ * 安全发送消息到background，处理扩展上下文失效的情况
+ */
+function safeSendMessage(message, callback) {
+  try {
+    // 先检查扩展上下文是否有效
+    if (!chrome.runtime.id) {
+      console.log('[Content] Extension context invalidated, cannot send message');
+      return;
+    }
+    
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        console.log('[Content] Message send failed:', chrome.runtime.lastError.message);
+        return;
+      }
+      if (callback) callback(response);
+    });
+  } catch (error) {
+    console.log('[Content] Failed to send message:', error.message);
+  }
+}
+
 // ============== 初始化 ==============
 
 /**
@@ -186,10 +211,29 @@ function extractAccount() {
 
 // ============== 登录监听 ==============
 
+/**
+ * 检查扩展上下文是否有效
+ */
+function isExtensionContextValid() {
+  try {
+    // 尝试访问chrome.runtime.id，如果上下文失效会抛出异常
+    return !!chrome.runtime.id;
+  } catch (e) {
+    return false;
+  }
+}
+
 function observeNavigation() {
   let currentUrl = window.location.href;
   
   const observer = new MutationObserver(() => {
+    // 检查扩展上下文是否有效
+    if (!isExtensionContextValid()) {
+      observer.disconnect();
+      console.log('[Content] Extension context invalidated, observer disconnected');
+      return;
+    }
+    
     if (window.location.href !== currentUrl) {
       const oldUrl = currentUrl;
       currentUrl = window.location.href;
@@ -200,6 +244,8 @@ function observeNavigation() {
   observer.observe(document.body, { childList: true, subtree: true });
   
   window.addEventListener('popstate', () => {
+    if (!isExtensionContextValid()) return;
+    
     if (window.location.href !== currentUrl) {
       const oldUrl = currentUrl;
       currentUrl = window.location.href;
@@ -214,7 +260,7 @@ function handleUrlChange(oldUrl, newUrl) {
   const oldPageType = getPageTypeFromUrl(oldUrl);
   const newPageType = getPageTypeFromUrl(newUrl);
   
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'pageChanged',
     pageType: newPageType,
     oldPageType: oldPageType,
@@ -255,14 +301,10 @@ function captureAndSendToken() {
     
     console.log('[Content] Token captured, type:', tokenInfo.accountType);
     
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       action: 'tokenCaptured',
       tokenInfo: tokenInfo
     }, (response) => {
-      if (chrome.runtime.lastError) {
-        showNotification('Token同步失败: ' + chrome.runtime.lastError.message, 'error');
-        return;
-      }
       if (response && response.success) {
         showNotification('Token已同步', 'success');
       } else if (response && response.error) {
@@ -365,14 +407,10 @@ function handleTokenFromLoginApi(token, accountType) {
   
   console.log('[Content] Token from login API, type:', accountType);
   
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'tokenCaptured',
     tokenInfo: tokenInfo
   }, (response) => {
-    if (chrome.runtime.lastError) {
-      showNotification('Token同步失败', 'error');
-      return;
-    }
     if (response && response.success) {
       showNotification('Token已同步', 'success');
     }
@@ -427,6 +465,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       handleTokenExpiredNotification(message.reason);
       sendResponse({ success: true });
       break;
+    
+    case 'tokenDeleted':
+      handleTokenDeletedNotification(message.reason);
+      sendResponse({ success: true });
+      break;
       
     case 'tokenSynced':
       showNotification('Token已同步', 'success');
@@ -439,9 +482,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
       
     case 'pageLoaded':
+      // 页面加载完成时，如果开关开启则开始监听
       if (message.isEnabled) {
         startMonitoring();
-        if (!message.hasToken && isIndexPage()) {
+        // 在首页时总是尝试捕获Token（无论是否已有Token）
+        if (isIndexPage()) {
           setTimeout(captureAndSendToken, 500);
         }
       }
@@ -459,6 +504,7 @@ function startMonitoring() {
   isMonitoring = true;
   console.log('[Content] Monitoring started for', currentConfig?.name);
   
+  // 在首页时总是尝试捕获Token（用于更新已有Token）
   if (isIndexPage()) {
     setTimeout(captureAndSendToken, 500);
   }
@@ -472,6 +518,16 @@ function stopMonitoring() {
 function handleTokenExpiredNotification(reason) {
   showNotification('Token已失效: ' + (reason || '请重新登录'), 'warning');
   isMonitoring = true;
+}
+
+function handleTokenDeletedNotification(reason) {
+  showNotification('Token已被删除: ' + (reason || '请重新登录'), 'warning');
+  isMonitoring = true;
+  
+  // 如果在首页，立即尝试重新捕获Token
+  if (isIndexPage()) {
+    setTimeout(captureAndSendToken, 500);
+  }
 }
 
 // ============== 初始化 ==============
@@ -490,13 +546,13 @@ function init() {
   interceptLoginApi();
   observeNavigation();
   
-  chrome.runtime.sendMessage({ action: 'checkShouldMonitor' }, (response) => {
+  safeSendMessage({ action: 'checkShouldMonitor' }, (response) => {
     if (response && response.shouldMonitor) {
       startMonitoring();
     }
   });
   
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'pageChanged',
     pageType: getCurrentPageType(),
     accountType: currentConfig.type

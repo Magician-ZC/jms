@@ -547,15 +547,15 @@ async function handleTokenExpired(payload) {
 async function handleTokenDeleted(payload) {
   console.log('[Background] Token deleted for user:', payload.userId, 'reason:', payload.reason);
   
-  // 更新状态，清除Token
+  // 更新状态，清除Token，并开启自动监听以便重新捕获
   await setState({ 
     hasToken: false,
     lastTokenTime: null,
-    tokenExpiredReason: null,
-    isAutoMonitoring: false
+    tokenExpiredReason: payload.reason || 'Token已被删除',
+    isAutoMonitoring: true  // 开启自动监听，等待重新捕获Token
   });
   
-  // 通知所有JMS页面的Content Script
+  // 通知所有JMS页面的Content Script，触发重新捕获Token
   await notifyContentScript({ 
     action: 'tokenDeleted', 
     reason: payload.reason,
@@ -565,7 +565,7 @@ async function handleTokenDeleted(payload) {
   // 广播状态更新给Popup
   broadcastStateUpdate();
   
-  console.log('[Background] Local token state cleared after server deletion');
+  console.log('[Background] Local token state cleared after server deletion, auto monitoring enabled');
 }
 
 /**
@@ -597,8 +597,8 @@ function handleContentMessage(message, sender, sendResponse) {
       break;
       
     case 'checkShouldMonitor':
-      // 检查是否应该监听
-      sendResponse({ shouldMonitor: state.isEnabled && !state.hasToken });
+      // 只要开关开启就应该监听（用于更新Token）
+      sendResponse({ shouldMonitor: state.isEnabled });
       break;
       
     default:
