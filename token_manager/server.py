@@ -80,6 +80,9 @@ class TokenResponse(BaseModel):
     token_masked: str  # 脱敏后的Token
     status: str
     extension_id: Optional[str]
+    network_code: Optional[str]  # 网点编码
+    network_name: Optional[str]  # 网点名称
+    network_id: Optional[int]  # 网点ID
     created_at: Optional[str]
     updated_at: Optional[str]
     last_active_at: Optional[str]
@@ -110,12 +113,32 @@ class AuthRequest(BaseModel):
 # 允许的本地地址
 ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1", "testclient"}
 
+# 允许的局域网网段
+ALLOWED_NETWORKS = ["10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."]
+
+
+def is_allowed_host(host: str) -> bool:
+    """检查是否是允许的主机地址"""
+    if not host:
+        return False
+    
+    # 检查本地地址
+    if host in ALLOWED_HOSTS:
+        return True
+    
+    # 检查局域网地址
+    for network in ALLOWED_NETWORKS:
+        if host.startswith(network):
+            return True
+    
+    return False
+
 
 async def localhost_access_control(request: Request, call_next):
     """
-    Localhost访问控制中间件
+    访问控制中间件
     
-    仅允许来自localhost的请求访问API
+    允许来自localhost和局域网的请求访问API
     
     Requirements: 9.1
     """
@@ -125,11 +148,11 @@ async def localhost_access_control(request: Request, call_next):
     # WebSocket连接的处理
     if request.url.path == "/ws":
         # WebSocket连接也需要验证来源
-        if client_host not in ALLOWED_HOSTS:
-            logger.warning(f"WebSocket连接被拒绝: 非本地来源 {client_host}")
+        if not is_allowed_host(client_host):
+            logger.warning(f"WebSocket连接被拒绝: 非允许来源 {client_host}")
             return JSONResponse(
                 status_code=403,
-                content={"detail": "Forbidden: Only localhost access is allowed"}
+                content={"detail": "Forbidden: Only local/LAN access is allowed"}
             )
         return await call_next(request)
     
@@ -137,13 +160,13 @@ async def localhost_access_control(request: Request, call_next):
     if request.url.path.startswith("/static") or request.url.path.startswith("/management") or request.url.path in ["/docs", "/redoc", "/openapi.json", "/"]:
         return await call_next(request)
     
-    # API路径检查localhost
+    # API路径检查
     if request.url.path.startswith("/api"):
-        if client_host not in ALLOWED_HOSTS:
-            logger.warning(f"API请求被拒绝: 非本地来源 {client_host}")
+        if not is_allowed_host(client_host):
+            logger.warning(f"API请求被拒绝: 非允许来源 {client_host}")
             return JSONResponse(
                 status_code=403,
-                content={"detail": "Forbidden: Only localhost access is allowed"}
+                content={"detail": "Forbidden: Only local/LAN access is allowed"}
             )
     
     return await call_next(request)
@@ -203,6 +226,9 @@ def token_to_response(token) -> TokenResponse:
         token_masked=token_masked,
         status=token.status.value if isinstance(token.status, TokenStatus) else token.status,
         extension_id=token.extension_id,
+        network_code=token.network_code,
+        network_name=token.network_name,
+        network_id=token.network_id,
         created_at=token.created_at.isoformat() if token.created_at else None,
         updated_at=token.updated_at.isoformat() if token.updated_at else None,
         last_active_at=token.last_active_at.isoformat() if token.last_active_at else None
@@ -473,6 +499,10 @@ async def handle_websocket_message(
             user_id = payload["userId"]
             account = payload.get("account")  # 获取账号信息
             account_type = payload.get("accountType")  # 获取账号类型
+            # 获取网点信息（仅网点账号有）
+            network_code = payload.get("networkCode")
+            network_name = payload.get("networkName")
+            network_id = payload.get("networkId")
             
             try:
                 token = service.create_or_update(
@@ -480,7 +510,10 @@ async def handle_websocket_message(
                     user_id=user_id,
                     extension_id=extension_id,
                     account=account,
-                    account_type=account_type
+                    account_type=account_type,
+                    network_code=network_code,
+                    network_name=network_name,
+                    network_id=network_id
                 )
                 
                 # 关联用户ID到连接
@@ -491,7 +524,7 @@ async def handle_websocket_message(
                     token_id=token.id,
                     message="Token已保存"
                 ))
-                logger.info(f"Token上报成功: user_id={user_id}, account={account}, type={account_type}, extension_id={extension_id}")
+                logger.info(f"Token上报成功: user_id={user_id}, account={account}, type={account_type}, network={network_code}, extension_id={extension_id}")
                 
             except TokenValidationError as e:
                 await websocket.send_json(create_token_ack_message(
@@ -1374,6 +1407,61 @@ EXTENSION_FILES = [
 ]
 
 
+@app.get("/api/extension/version", tags=["Extension"])
+async def get_extension_version():
+    """
+    获取Chrome插件最新版本信息
+    从本地manifest.json读取版本号
+    """
+    import json
+    
+    extension_dir = Path(__file__).parent.parent / "chrome_extension"
+    manifest_path = extension_dir / "manifest.json"
+    
+    if not manifest_path.exists():
+        raise HTTPException(status_code=500, detail="插件manifest.json不存在")
+    
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+        
+        version = manifest.get("version", "1.0.0")
+        
+        # 读取更新日志（如果存在）
+        changelog = "功能优化和Bug修复"
+        changelog_path = extension_dir / "CHANGELOG.md"
+        if changelog_path.exists():
+            try:
+                content = changelog_path.read_text(encoding='utf-8')
+                # 提取最新版本的更新内容（简单处理）
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    if line.startswith('## ') and version in line:
+                        # 获取该版本的更新内容
+                        changelog_lines = []
+                        for j in range(i + 1, min(i + 10, len(lines))):
+                            if lines[j].startswith('## '):
+                                break
+                            if lines[j].strip():
+                                changelog_lines.append(lines[j].strip().lstrip('- '))
+                        if changelog_lines:
+                            changelog = '; '.join(changelog_lines[:3])
+                        break
+            except:
+                pass
+        
+        return {
+            "version": version,
+            "changelog": changelog,
+            "download_url": "/api/extension/download"
+        }
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="manifest.json格式错误")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取版本信息失败: {str(e)}")
+
+
 @app.post("/api/extension/update", tags=["Extension"])
 async def update_extension():
     """
@@ -1448,6 +1536,423 @@ async def download_extension():
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=chrome_extension.zip"}
     )
+
+
+# ============== 问题件登记API ==============
+
+# 问题件图片路径（相对于项目根目录）
+PROBLEM_PIECE_IMAGE_PATH = Path(__file__).parent.parent / "wentijian.png"
+
+class ProblemPieceRequest(BaseModel):
+    """问题件登记请求模型"""
+    waybill_no: str = Field(..., min_length=1, description="运单号")
+
+
+class ProblemPieceListRequest(BaseModel):
+    """获取问题件列表请求模型"""
+    date: Optional[str] = Field(None, description="查询日期，格式：YYYY-MM-DD，默认今天")
+
+
+async def get_network_id_from_api(token_value: str) -> Optional[int]:
+    """
+    从网点系统API获取网点ID
+    
+    Args:
+        token_value: 解密后的Token值
+        
+    Returns:
+        网点ID，获取失败返回None
+    """
+    import httpx
+    
+    headers = {
+        "authToken": token_value,
+        "Content-Type": "application/json;charset=UTF-8",
+        "lang": "zh_CN"
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # 尝试获取用户信息
+            response = await client.get(
+                "https://wdgw.jtexpress.com.cn/base/user/getUserInfo",
+                headers=headers
+            )
+            result = response.json()
+            
+            if result.get("code") == 1 and result.get("succ") and result.get("data"):
+                data = result["data"]
+                # 尝试多个可能的字段名
+                network_id = (
+                    data.get("receiveNetworkId") or 
+                    data.get("networkId") or 
+                    data.get("siteId") or
+                    data.get("id")
+                )
+                if network_id:
+                    logger.info(f"从API获取到网点ID: {network_id}")
+                    return int(network_id)
+    except Exception as e:
+        logger.warning(f"获取网点ID失败: {str(e)}")
+    
+    return None
+
+
+async def upload_problem_piece_image(token_value: str, client) -> Optional[str]:
+    """
+    上传问题件图片
+    
+    Args:
+        token_value: 解密后的Token值
+        client: httpx.AsyncClient实例
+        
+    Returns:
+        上传成功返回图片路径，失败返回None
+    """
+    # 检查图片文件是否存在
+    if not PROBLEM_PIECE_IMAGE_PATH.exists():
+        logger.warning(f"问题件图片不存在: {PROBLEM_PIECE_IMAGE_PATH}")
+        return None
+    
+    # 读取图片文件
+    image_data = PROBLEM_PIECE_IMAGE_PATH.read_bytes()
+    file_size = len(image_data)
+    
+    headers = {
+        "authToken": token_value,
+        "Content-Type": "application/json;charset=utf-8",
+        "lang": "zh_CN",
+        "routeName": "batchProblem"
+    }
+    
+    try:
+        # 第一步：获取上传签名URL
+        sign_url = "https://wdgw.jtexpress.com.cn/servicequality/file/getUploadSignedUrl"
+        params = {
+            "projectName": "jmswdweb",
+            "moduleName": "batchProblem",
+            "size": str(file_size),
+            "fileNames": "wentijian.png"
+        }
+        
+        response = await client.get(sign_url, params=params, headers=headers)
+        result = response.json()
+        
+        if not (result.get("code") == 1 and result.get("succ") and result.get("data")):
+            logger.warning(f"获取上传签名URL失败: {result.get('msg')}")
+            return None
+        
+        upload_info = result["data"][0]
+        upload_url = upload_info["url"]
+        image_path = upload_info["path"]
+        content_type = upload_info.get("contentType", "image/png")
+        
+        logger.info(f"获取上传签名URL成功: path={image_path}")
+        
+        # 第二步：上传图片到云存储
+        upload_headers = {
+            "Content-Type": content_type
+        }
+        
+        upload_response = await client.put(upload_url, content=image_data, headers=upload_headers)
+        
+        if upload_response.status_code in [200, 201]:
+            logger.info(f"图片上传成功: path={image_path}")
+            return image_path
+        else:
+            logger.warning(f"图片上传失败: status={upload_response.status_code}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"上传图片异常: {str(e)}")
+        return None
+
+
+@app.post("/api/problem-piece/{token_id}", tags=["ProblemPiece"])
+async def register_problem_piece(
+    token_id: int,
+    data: ProblemPieceRequest,
+    service: TokenService = Depends(get_service)
+):
+    """
+    问题件登记
+    
+    使用指定Token的凭证进行问题件登记（仅网点账号可用）
+    会自动上传预设的问题件图片
+    
+    Args:
+        token_id: Token ID
+        data: 请求数据，包含运单号
+        
+    Returns:
+        登记结果
+    """
+    import httpx
+    
+    try:
+        # 获取Token
+        token = service.get_by_id(token_id)
+        if token is None:
+            raise HTTPException(status_code=404, detail=f"Token不存在: id={token_id}")
+        
+        if token.status.value != 'active':
+            raise HTTPException(status_code=400, detail="Token已过期或无效")
+        
+        # 检查账号类型
+        account_type = "agent"
+        if token.account_type:
+            account_type = token.account_type.value if hasattr(token.account_type, 'value') else str(token.account_type)
+        
+        if account_type != 'network':
+            raise HTTPException(status_code=400, detail="问题件登记仅支持网点账号")
+        
+        # 解密Token
+        decrypted_token = decrypt_token(token.token_value)
+        
+        # 获取网点ID
+        network_id = token.network_id
+        if not network_id:
+            # 尝试从API获取网点ID
+            network_id = await get_network_id_from_api(decrypted_token)
+            if network_id:
+                # 更新数据库中的网点ID
+                service.update_network_info(token_id, network_id=network_id)
+        
+        if not network_id:
+            raise HTTPException(status_code=400, detail="无法获取网点ID，请重新登录")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # 上传图片
+            image_path = await upload_problem_piece_image(decrypted_token, client)
+            paths_value = image_path if image_path else ""
+            
+            # 构建请求数据（根据HAR文件分析）
+            request_data = {
+                "waybillNo": data.waybill_no,
+                "replyContent": "",
+                "problemPieceId": "",
+                "probleTypeSubjectId": 118,
+                "probleTypeSubjectId2": 100037,
+                "receiveNetworkId": network_id,
+                "replyContentImg": [],
+                "replyStatus": 0,
+                "probleTypeId": 4,
+                "probleDescription": "此件到达我司运单信息缺失，我司已安排补打运单并安排最近班次转出。",
+                "uploadDataProp": "success",
+                "knowNetwork": "",
+                "defaultKnow": None,
+                "firstLevelTypeName": "运单信息不全",
+                "changeDeliveryDate": "",
+                "deliveryTime": "",
+                "firstLevelTypeCode": "26",
+                "isChangePackaging": "",
+                "materialCode": "",
+                "thirdExpressId": "",
+                "thirdExpressCode": "",
+                "thirdExpressName": "",
+                "thirdWaybillNo": "",
+                "provinceName": "",
+                "cityName": "",
+                "districtName": "",
+                "provinceId": "",
+                "cityId": "",
+                "districtId": "",
+                "address": "",
+                "receiveName": "",
+                "receivePhone": "",
+                "problemTypeSubjectCode": "26",
+                "secondLevelTypeId": 100037,
+                "secondLevelTypeCode": "26a",
+                "secondLevelTypeName": "运单信息不全a",
+                "changeDeliveryTime": "",
+                "paths": paths_value,
+                "isCallConnectResult": False,
+                "countryId": "1"
+            }
+            
+            headers = {
+                "authToken": decrypted_token,
+                "Content-Type": "application/json;charset=UTF-8",
+                "lang": "zh_CN",
+                "routeName": "batchProblem"
+            }
+            
+            response = await client.post(
+                "https://wdgw.jtexpress.com.cn/servicequality/problemPiece/registration",
+                json=request_data,
+                headers=headers
+            )
+            result = response.json()
+            
+            if result.get("code") == 1 and result.get("succ"):
+                logger.info(f"问题件登记成功: waybill_no={data.waybill_no}, network_id={network_id}, image={image_path}")
+                return {
+                    "success": True,
+                    "message": "问题件登记成功",
+                    "waybill_no": data.waybill_no,
+                    "image_uploaded": bool(image_path)
+                }
+            else:
+                error_msg = result.get("msg", "登记失败")
+                logger.warning(f"问题件登记失败: waybill_no={data.waybill_no}, error={error_msg}")
+                return {
+                    "success": False,
+                    "message": error_msg,
+                    "waybill_no": data.waybill_no
+                }
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"问题件登记异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"登记失败: {str(e)}")
+
+
+@app.post("/api/problem-piece/{token_id}/list", tags=["ProblemPiece"])
+async def get_problem_piece_list(
+    token_id: int,
+    data: ProblemPieceListRequest = None,
+    service: TokenService = Depends(get_service)
+):
+    """
+    获取问题件列表
+    
+    获取指定日期的问题件列表，返回未登记的运单号
+    
+    Args:
+        token_id: Token ID
+        data: 请求数据，包含可选的日期参数
+        
+    Returns:
+        问题件列表
+    """
+    import httpx
+    
+    try:
+        # 获取Token
+        token = service.get_by_id(token_id)
+        if token is None:
+            raise HTTPException(status_code=404, detail=f"Token不存在: id={token_id}")
+        
+        if token.status.value != 'active':
+            raise HTTPException(status_code=400, detail="Token已过期或无效")
+        
+        # 检查账号类型
+        account_type = "agent"
+        if token.account_type:
+            account_type = token.account_type.value if hasattr(token.account_type, 'value') else str(token.account_type)
+        
+        if account_type != 'network':
+            raise HTTPException(status_code=400, detail="问题件列表仅支持网点账号")
+        
+        # 解密Token
+        decrypted_token = decrypt_token(token.token_value)
+        
+        # 获取网点信息
+        network_id = token.network_id
+        network_name = token.network_name
+        network_code = token.network_code
+        
+        if not network_id or not network_code:
+            raise HTTPException(status_code=400, detail="网点信息不完整，请重新登录")
+        
+        # 确定日期
+        target_date = None
+        if data and data.date:
+            target_date = data.date
+        else:
+            target_date = datetime.now().strftime("%Y-%m-%d")
+        
+        headers = {
+            "authToken": decrypted_token,
+            "Content-Type": "application/json;charset=UTF-8",
+            "lang": "zh_CN",
+            "routeName": "OutofWarehouseParts"
+        }
+        
+        # 分页获取所有数据
+        all_records = []
+        current_page = 1
+        page_size = 100
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            while True:
+                request_data = {
+                    "current": current_page,
+                    "size": page_size,
+                    "networkId": network_id,
+                    "networkName": network_name or "",
+                    "networkCode": network_code,
+                    "inputDate": target_date,
+                    "signType": 0,
+                    "isCurrent": "1",
+                    "deliverUser": None,
+                    "countryId": "1"
+                }
+                
+                response = await client.post(
+                    "https://wdgw.jtexpress.com.cn/reportgateway/bigdataReport/detailDir/businessin/nms_deliver_area_monitor_detail_new",
+                    json=request_data,
+                    headers=headers
+                )
+                result = response.json()
+                
+                if result.get("code") != 1 or not result.get("data"):
+                    break
+                
+                records = result.get("data", {}).get("records", [])
+                if not records:
+                    break
+                
+                all_records.extend(records)
+                
+                # 如果返回的记录数小于page_size，说明已经是最后一页
+                if len(records) < page_size:
+                    break
+                
+                current_page += 1
+                
+                # 安全限制，最多获取10页
+                if current_page > 10:
+                    break
+        
+        # 筛选未登记的运单（没有problemTime字段的）
+        unregistered = []
+        registered = []
+        
+        for record in all_records:
+            waybill_info = {
+                "billcode": record.get("billcode"),
+                "deliveruser": record.get("deliveruser"),
+                "deliverTime": record.get("deliverTime"),
+                "problemTime": record.get("problemTime"),
+                "problemTypeOne": record.get("problemTypeOne"),
+                "thirdCode": record.get("thirdCode")
+            }
+            
+            if record.get("problemTime"):
+                registered.append(waybill_info)
+            else:
+                unregistered.append(waybill_info)
+        
+        logger.info(f"获取问题件列表: date={target_date}, total={len(all_records)}, unregistered={len(unregistered)}, registered={len(registered)}")
+        
+        return {
+            "success": True,
+            "date": target_date,
+            "network_name": network_name,
+            "total": len(all_records),
+            "unregistered_count": len(unregistered),
+            "registered_count": len(registered),
+            "unregistered": unregistered,
+            "registered": registered
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取问题件列表异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取列表失败: {str(e)}")
 
 
 # ============== 应用生命周期事件 ==============

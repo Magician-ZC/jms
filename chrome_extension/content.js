@@ -178,15 +178,23 @@ function extractToken() {
 }
 
 function extractUserId() {
+  // 优先从localStorage获取账号信息
   try {
-    const userElements = document.querySelectorAll('[class*="user"], [class*="account"]');
-    for (const el of userElements) {
-      const text = el.textContent.trim();
-      if (text && text.length < 50) {
-        return text;
-      }
+    const brUser = localStorage.getItem('br-user');
+    if (brUser && brUser.trim()) {
+      return brUser.trim();
     }
-  } catch (error) {}
+    
+    const userDataStr = localStorage.getItem('userData');
+    if (userDataStr) {
+      const userData = JSON.parse(userDataStr);
+      const account = userData.account || userData.username || userData.loginName || userData.userCode;
+      if (account) return account;
+    }
+  } catch (error) {
+    console.error('[Content] Failed to extract userId from localStorage:', error);
+  }
+  
   return 'user_' + Date.now();
 }
 
@@ -206,6 +214,42 @@ function extractAccount() {
       } catch (e) {}
     }
   } catch (error) {}
+  return null;
+}
+
+/**
+ * 提取网点信息（用于网点账号的问题件登记）
+ * 从localStorage中的userData提取networkCode和networkName
+ */
+function extractNetworkInfo() {
+  try {
+    const userDataStr = localStorage.getItem('userData');
+    if (userDataStr) {
+      const userData = JSON.parse(userDataStr);
+      // 网点信息可能在不同字段中
+      const networkCode = userData.networkCode || userData.siteCode || userData.receiveNetworkCode || null;
+      const networkName = userData.networkName || userData.siteName || userData.receiveNetworkName || null;
+      const networkId = userData.networkId || userData.siteId || userData.receiveNetworkId || null;
+      
+      if (networkCode || networkId) {
+        console.log('[Content] Network info extracted:', { networkCode, networkName, networkId });
+        return { networkCode, networkName, networkId };
+      }
+    }
+    
+    // 尝试从其他localStorage键获取
+    const networkInfoStr = localStorage.getItem('networkInfo');
+    if (networkInfoStr) {
+      const networkInfo = JSON.parse(networkInfoStr);
+      return {
+        networkCode: networkInfo.code || networkInfo.networkCode,
+        networkName: networkInfo.name || networkInfo.networkName,
+        networkId: networkInfo.id || networkInfo.networkId
+      };
+    }
+  } catch (error) {
+    console.error('[Content] Failed to extract network info:', error);
+  }
   return null;
 }
 
@@ -298,6 +342,16 @@ function captureAndSendToken() {
       source: tokenResult.source,
       captureTime: Date.now()
     };
+    
+    // 如果是网点账号，提取网点信息
+    if (currentConfig && currentConfig.type === 'network') {
+      const networkInfo = extractNetworkInfo();
+      if (networkInfo) {
+        tokenInfo.networkCode = networkInfo.networkCode;
+        tokenInfo.networkName = networkInfo.networkName;
+        tokenInfo.networkId = networkInfo.networkId;
+      }
+    }
     
     console.log('[Content] Token captured, type:', tokenInfo.accountType);
     
@@ -405,7 +459,25 @@ function handleTokenFromLoginApi(token, accountType) {
     captureTime: Date.now()
   };
   
-  console.log('[Content] Token from login API, type:', accountType);
+  // 如果是网点账号，提取网点信息
+  if (accountType === 'network') {
+    // 延迟提取，等待userData写入localStorage
+    setTimeout(() => {
+      const networkInfo = extractNetworkInfo();
+      if (networkInfo) {
+        tokenInfo.networkCode = networkInfo.networkCode;
+        tokenInfo.networkName = networkInfo.networkName;
+        tokenInfo.networkId = networkInfo.networkId;
+      }
+      sendTokenInfo(tokenInfo);
+    }, 500);
+  } else {
+    sendTokenInfo(tokenInfo);
+  }
+}
+
+function sendTokenInfo(tokenInfo) {
+  console.log('[Content] Token from login API, type:', tokenInfo.accountType);
   
   safeSendMessage({
     action: 'tokenCaptured',

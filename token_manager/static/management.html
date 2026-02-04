@@ -161,6 +161,58 @@
         </div>
     </div>
 
+    <!-- 问题件登记对话框 -->
+    <div id="problem-piece-dialog" class="dialog-overlay" style="display: none;">
+        <div class="dialog problem-piece-dialog">
+            <h3>📝 问题件批量登记</h3>
+            <p>网点: <strong id="problem-piece-network-name"></strong></p>
+            <input type="hidden" id="problem-piece-token-id">
+            
+            <!-- 日期选择和获取列表 -->
+            <div class="form-group">
+                <label>查询日期：</label>
+                <div class="date-row">
+                    <input type="date" id="problem-piece-date" class="form-input">
+                    <button onclick="fetchProblemPieceList()" class="btn btn-primary btn-sm">获取列表</button>
+                </div>
+            </div>
+            
+            <!-- 统计信息 -->
+            <div id="problem-piece-stats" class="problem-piece-stats" style="display: none;">
+                <div class="stat-row">
+                    <span>总数: <strong id="pp-total">0</strong></span>
+                    <span>未登记: <strong id="pp-unregistered" class="text-warning">0</strong></span>
+                    <span>已登记: <strong id="pp-registered" class="text-success">0</strong></span>
+                </div>
+            </div>
+            
+            <!-- 运单列表 -->
+            <div id="problem-piece-list-container" class="problem-piece-list-container" style="display: none;">
+                <div class="list-header-row">
+                    <span>待登记运单列表</span>
+                    <div class="batch-controls">
+                        <button id="pp-start-btn" onclick="startBatchRegister()" class="btn btn-success btn-sm">▶ 开始登记</button>
+                        <button id="pp-pause-btn" onclick="pauseBatchRegister()" class="btn btn-warning btn-sm" style="display: none;">⏸ 暂停</button>
+                        <button id="pp-resume-btn" onclick="resumeBatchRegister()" class="btn btn-primary btn-sm" style="display: none;">▶ 继续</button>
+                    </div>
+                </div>
+                <div id="problem-piece-list" class="problem-piece-list">
+                    <!-- 运单列表将动态渲染 -->
+                </div>
+                <div id="pp-progress" class="pp-progress" style="display: none;">
+                    <div class="progress-bar">
+                        <div id="pp-progress-fill" class="progress-fill" style="width: 0%"></div>
+                    </div>
+                    <span id="pp-progress-text">0/0</span>
+                </div>
+            </div>
+            
+            <div class="dialog-actions">
+                <button onclick="hideProblemPieceDialog()" class="btn btn-secondary">关闭</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 悬浮任务中心 -->
     <div id="task-center" class="task-center">
         <div class="task-center-header">

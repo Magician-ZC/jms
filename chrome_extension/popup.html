@@ -86,6 +86,31 @@
         <button class="btn btn-secondary btn-sm" id="cancelSettings">取消</button>
         <button class="btn btn-primary btn-sm" id="saveSettings">保存</button>
       </div>
+      
+      <!-- 在线更新 -->
+      <div class="settings-divider"></div>
+      <div class="settings-title">插件更新</div>
+      <div class="update-info">
+        <div class="update-version">
+          <span class="update-label">当前版本</span>
+          <span class="update-value" id="currentVersion">v1.1.0</span>
+        </div>
+        <div class="update-version" id="latestVersionRow" style="display: none;">
+          <span class="update-label">最新版本</span>
+          <span class="update-value" id="latestVersion">-</span>
+        </div>
+        <div class="update-status" id="updateStatus"></div>
+      </div>
+      <div class="update-actions">
+        <button class="btn btn-secondary btn-sm" id="checkUpdateBtn">
+          <span class="btn-icon">🔍</span>
+          检查更新
+        </button>
+        <button class="btn btn-primary btn-sm" id="doUpdateBtn" style="display: none;">
+          <span class="btn-icon">⬇</span>
+          立即更新
+        </button>
+      </div>
     </section>
 
     <!-- 底部信息 -->

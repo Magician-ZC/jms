@@ -324,6 +324,9 @@ function createTokenCard(token) {
     
     const accountTypeClass = token.account_type === 'network' ? 'type-network' : 'type-agent';
     
+    // 网点信息显示
+    const networkInfo = token.network_name ? `<span class="network-info">📍 ${escapeHtml(token.network_name)}</span>` : '';
+    
     // 状态显示
     const statusText = {
         'active': '✓ 活跃',
@@ -344,6 +347,7 @@ function createTokenCard(token) {
                     <h3>${escapeHtml(displayName)}</h3>
                     <span class="token-id">ID: ${token.id}</span>
                     <span class="account-type ${accountTypeClass}">${accountTypeText}</span>
+                    ${networkInfo}
                 </div>
             </div>
             <span class="token-status ${token.status}">${statusText}</span>
@@ -366,6 +370,11 @@ function createTokenCard(token) {
                 ${token.status === 'active' && token.account_type === 'agent' ? `
                 <button class="btn btn-success btn-sm" onclick="showWaybillDownloadDialog(${token.id}, '${escapeHtml(token.account || token.user_id)}')" title="寄件运单下载">
                     📦 寄件运单下载
+                </button>
+                ` : ''}
+                ${token.status === 'active' && token.account_type === 'network' ? `
+                <button class="btn btn-warning btn-sm" onclick="showProblemPieceDialog(${token.id}, '${escapeHtml(token.network_name || token.account || token.user_id)}')" title="问题件登记">
+                    📝 问题件登记
                 </button>
                 ` : ''}
                 <button class="btn btn-danger btn-sm" onclick="showDeleteDialog(${token.id}, '${escapeHtml(token.user_id)}')">
@@ -1116,3 +1125,382 @@ async function downloadExtension() {
 
 window.updateExtension = updateExtension;
 window.downloadExtension = downloadExtension;
+
+
+// ============== 问题件登记功能 ==============
+
+// 问题件登记状态
+const problemPieceState = {
+    tokenId: null,
+    networkName: '',
+    waybillList: [],
+    currentIndex: 0,
+    isRunning: false,
+    isPaused: false,
+    timer: null
+};
+
+/**
+ * 显示问题件登记对话框
+ * @param {number} tokenId Token ID
+ * @param {string} networkName 网点名称
+ */
+function showProblemPieceDialog(tokenId, networkName) {
+    // 重置状态
+    problemPieceState.tokenId = tokenId;
+    problemPieceState.networkName = networkName;
+    problemPieceState.waybillList = [];
+    problemPieceState.currentIndex = 0;
+    problemPieceState.isRunning = false;
+    problemPieceState.isPaused = false;
+    
+    // 设置默认日期为今天
+    const today = new Date().toISOString().split('T')[0];
+    
+    document.getElementById('problem-piece-token-id').value = tokenId;
+    document.getElementById('problem-piece-network-name').textContent = networkName;
+    document.getElementById('problem-piece-date').value = today;
+    
+    // 隐藏列表和统计
+    document.getElementById('problem-piece-stats').style.display = 'none';
+    document.getElementById('problem-piece-list-container').style.display = 'none';
+    document.getElementById('pp-progress').style.display = 'none';
+    
+    // 重置按钮状态
+    document.getElementById('pp-start-btn').style.display = 'inline-flex';
+    document.getElementById('pp-pause-btn').style.display = 'none';
+    document.getElementById('pp-resume-btn').style.display = 'none';
+    
+    document.getElementById('problem-piece-dialog').style.display = 'flex';
+}
+
+/**
+ * 隐藏问题件登记对话框
+ */
+function hideProblemPieceDialog() {
+    // 停止正在进行的登记
+    if (problemPieceState.timer) {
+        clearTimeout(problemPieceState.timer);
+        problemPieceState.timer = null;
+    }
+    problemPieceState.isRunning = false;
+    problemPieceState.isPaused = false;
+    
+    document.getElementById('problem-piece-dialog').style.display = 'none';
+}
+
+/**
+ * 获取问题件列表
+ */
+async function fetchProblemPieceList() {
+    const tokenId = document.getElementById('problem-piece-token-id').value;
+    const date = document.getElementById('problem-piece-date').value;
+    
+    if (!date) {
+        showToast('请选择日期', 'error');
+        return;
+    }
+    
+    showToast('正在获取问题件列表...', 'info');
+    
+    try {
+        const response = await fetch(`${CONFIG.API_BASE_URL}/api/problem-piece/${tokenId}/list`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.detail || '获取列表失败');
+        }
+        
+        if (!data.success) {
+            throw new Error(data.message || '获取列表失败');
+        }
+        
+        // 更新统计
+        document.getElementById('pp-total').textContent = data.total;
+        document.getElementById('pp-unregistered').textContent = data.unregistered_count;
+        document.getElementById('pp-registered').textContent = data.registered_count;
+        document.getElementById('problem-piece-stats').style.display = 'block';
+        
+        // 保存未登记的运单列表
+        problemPieceState.waybillList = data.unregistered.map(item => ({
+            billcode: item.billcode,
+            deliveruser: item.deliveruser,
+            deliverTime: item.deliverTime,
+            status: 'pending',
+            message: ''
+        }));
+        problemPieceState.currentIndex = 0;
+        
+        // 渲染列表
+        renderProblemPieceList();
+        
+        document.getElementById('problem-piece-list-container').style.display = 'block';
+        
+        if (data.unregistered_count === 0) {
+            showToast('没有需要登记的问题件', 'info');
+        } else {
+            showToast(`找到 ${data.unregistered_count} 个待登记运单`, 'success');
+        }
+        
+    } catch (error) {
+        console.error('获取问题件列表失败:', error);
+        showToast(`获取列表失败: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * 渲染问题件列表
+ */
+function renderProblemPieceList() {
+    const container = document.getElementById('problem-piece-list');
+    
+    if (problemPieceState.waybillList.length === 0) {
+        container.innerHTML = '<div class="pp-empty">暂无待登记运单</div>';
+        return;
+    }
+    
+    container.innerHTML = problemPieceState.waybillList.map((item, index) => {
+        const statusText = {
+            'pending': '待登记',
+            'processing': '登记中...',
+            'success': '✓ 成功',
+            'failed': '✗ 失败'
+        }[item.status] || item.status;
+        
+        return `
+            <div class="pp-item ${item.status}" data-index="${index}">
+                <div class="pp-item-info">
+                    <span class="pp-item-billcode">${escapeHtml(item.billcode)}</span>
+                    <span class="pp-item-detail">${escapeHtml(item.deliveruser || '')} | ${escapeHtml(item.deliverTime || '')}</span>
+                    ${item.message ? `<span class="pp-item-detail" style="color: var(--danger-color);">${escapeHtml(item.message)}</span>` : ''}
+                </div>
+                <span class="pp-item-status ${item.status}">${statusText}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * 更新单个运单项的状态
+ */
+function updateProblemPieceItem(index) {
+    const item = problemPieceState.waybillList[index];
+    const element = document.querySelector(`.pp-item[data-index="${index}"]`);
+    
+    if (!element) return;
+    
+    const statusText = {
+        'pending': '待登记',
+        'processing': '登记中...',
+        'success': '✓ 成功',
+        'failed': '✗ 失败'
+    }[item.status] || item.status;
+    
+    element.className = `pp-item ${item.status}`;
+    element.querySelector('.pp-item-status').className = `pp-item-status ${item.status}`;
+    element.querySelector('.pp-item-status').textContent = statusText;
+    
+    // 如果有错误消息，添加显示
+    if (item.message && item.status === 'failed') {
+        const infoDiv = element.querySelector('.pp-item-info');
+        let msgSpan = infoDiv.querySelector('.pp-item-message');
+        if (!msgSpan) {
+            msgSpan = document.createElement('span');
+            msgSpan.className = 'pp-item-detail pp-item-message';
+            msgSpan.style.color = 'var(--danger-color)';
+            infoDiv.appendChild(msgSpan);
+        }
+        msgSpan.textContent = item.message;
+    }
+    
+    // 滚动到当前项
+    element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/**
+ * 更新进度条
+ */
+function updateProgress() {
+    const total = problemPieceState.waybillList.length;
+    const completed = problemPieceState.waybillList.filter(
+        item => item.status === 'success' || item.status === 'failed'
+    ).length;
+    
+    const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+    
+    document.getElementById('pp-progress-fill').style.width = `${percent}%`;
+    document.getElementById('pp-progress-text').textContent = `${completed}/${total}`;
+}
+
+/**
+ * 开始批量登记
+ */
+function startBatchRegister() {
+    if (problemPieceState.waybillList.length === 0) {
+        showToast('没有待登记的运单', 'error');
+        return;
+    }
+    
+    problemPieceState.isRunning = true;
+    problemPieceState.isPaused = false;
+    problemPieceState.currentIndex = 0;
+    
+    // 重置所有状态为pending
+    problemPieceState.waybillList.forEach(item => {
+        item.status = 'pending';
+        item.message = '';
+    });
+    renderProblemPieceList();
+    
+    // 更新按钮状态
+    document.getElementById('pp-start-btn').style.display = 'none';
+    document.getElementById('pp-pause-btn').style.display = 'inline-flex';
+    document.getElementById('pp-resume-btn').style.display = 'none';
+    document.getElementById('pp-progress').style.display = 'flex';
+    
+    updateProgress();
+    
+    // 开始处理
+    processNextWaybill();
+}
+
+/**
+ * 暂停批量登记
+ */
+function pauseBatchRegister() {
+    problemPieceState.isPaused = true;
+    
+    if (problemPieceState.timer) {
+        clearTimeout(problemPieceState.timer);
+        problemPieceState.timer = null;
+    }
+    
+    // 更新按钮状态
+    document.getElementById('pp-pause-btn').style.display = 'none';
+    document.getElementById('pp-resume-btn').style.display = 'inline-flex';
+    
+    showToast('已暂停登记', 'info');
+}
+
+/**
+ * 继续批量登记
+ */
+function resumeBatchRegister() {
+    problemPieceState.isPaused = false;
+    
+    // 更新按钮状态
+    document.getElementById('pp-pause-btn').style.display = 'inline-flex';
+    document.getElementById('pp-resume-btn').style.display = 'none';
+    
+    showToast('继续登记...', 'info');
+    
+    // 继续处理
+    processNextWaybill();
+}
+
+/**
+ * 处理下一个运单
+ */
+async function processNextWaybill() {
+    // 检查是否暂停或完成
+    if (problemPieceState.isPaused || !problemPieceState.isRunning) {
+        return;
+    }
+    
+    // 找到下一个待处理的运单
+    while (problemPieceState.currentIndex < problemPieceState.waybillList.length) {
+        const item = problemPieceState.waybillList[problemPieceState.currentIndex];
+        if (item.status === 'pending') {
+            break;
+        }
+        problemPieceState.currentIndex++;
+    }
+    
+    // 检查是否全部完成
+    if (problemPieceState.currentIndex >= problemPieceState.waybillList.length) {
+        finishBatchRegister();
+        return;
+    }
+    
+    const item = problemPieceState.waybillList[problemPieceState.currentIndex];
+    
+    // 更新状态为处理中
+    item.status = 'processing';
+    updateProblemPieceItem(problemPieceState.currentIndex);
+    
+    try {
+        // 调用登记API
+        const response = await fetch(`${CONFIG.API_BASE_URL}/api/problem-piece/${problemPieceState.tokenId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ waybill_no: item.billcode })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+            item.status = 'success';
+        } else {
+            item.status = 'failed';
+            item.message = data.message || data.detail || '登记失败';
+        }
+    } catch (error) {
+        item.status = 'failed';
+        item.message = error.message || '网络错误';
+    }
+    
+    // 更新UI
+    updateProblemPieceItem(problemPieceState.currentIndex);
+    updateProgress();
+    
+    // 移动到下一个
+    problemPieceState.currentIndex++;
+    
+    // 检查是否还有待处理的
+    const hasPending = problemPieceState.waybillList.some(i => i.status === 'pending');
+    
+    if (hasPending && problemPieceState.isRunning && !problemPieceState.isPaused) {
+        // 随机延迟5-20秒
+        const delay = Math.floor(Math.random() * 15000) + 5000;
+        problemPieceState.timer = setTimeout(processNextWaybill, delay);
+    } else if (!hasPending) {
+        finishBatchRegister();
+    }
+}
+
+/**
+ * 完成批量登记
+ */
+function finishBatchRegister() {
+    problemPieceState.isRunning = false;
+    
+    if (problemPieceState.timer) {
+        clearTimeout(problemPieceState.timer);
+        problemPieceState.timer = null;
+    }
+    
+    // 统计结果
+    const successCount = problemPieceState.waybillList.filter(i => i.status === 'success').length;
+    const failedCount = problemPieceState.waybillList.filter(i => i.status === 'failed').length;
+    
+    // 更新按钮状态
+    document.getElementById('pp-start-btn').style.display = 'inline-flex';
+    document.getElementById('pp-start-btn').textContent = '🔄 重新开始';
+    document.getElementById('pp-pause-btn').style.display = 'none';
+    document.getElementById('pp-resume-btn').style.display = 'none';
+    
+    showToast(`登记完成！成功: ${successCount}, 失败: ${failedCount}`, successCount > 0 ? 'success' : 'error');
+}
+
+// 暴露全局函数
+window.showProblemPieceDialog = showProblemPieceDialog;
+window.hideProblemPieceDialog = hideProblemPieceDialog;
+window.fetchProblemPieceList = fetchProblemPieceList;
+window.startBatchRegister = startBatchRegister;
+window.pauseBatchRegister = pauseBatchRegister;
+window.resumeBatchRegister = resumeBatchRegister;

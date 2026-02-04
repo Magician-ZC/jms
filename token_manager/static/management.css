@@ -1104,3 +1104,225 @@ body {
     font-size: 13px;
     color: var(--text-secondary);
 }
+
+
+/* ============== 问题件登记样式 ============== */
+
+/* 警告按钮样式（黄色/橙色） */
+.btn-warning {
+    background: var(--warning-color);
+    color: white;
+}
+
+.btn-warning:hover {
+    background: #ffc53d;
+}
+
+/* 网点信息显示样式 */
+.network-info {
+    display: inline-block;
+    font-size: 11px;
+    color: #fa8c16;
+    margin-left: 8px;
+}
+
+/* 问题件登记对话框 */
+.problem-piece-dialog {
+    max-width: 550px;
+    text-align: left;
+}
+
+.problem-piece-dialog h3 {
+    text-align: center;
+}
+
+.problem-piece-dialog > p {
+    text-align: center;
+    margin-bottom: 15px;
+}
+
+.problem-piece-dialog .form-group {
+    margin: 15px 0;
+}
+
+.problem-piece-dialog .form-input {
+    text-transform: uppercase;
+}
+
+/* 日期行 */
+.date-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.date-row .form-input {
+    flex: 1;
+}
+
+/* 统计信息 */
+.problem-piece-stats {
+    background: #f5f7fa;
+    padding: 12px 15px;
+    border-radius: var(--radius-sm);
+    margin: 15px 0;
+}
+
+.stat-row {
+    display: flex;
+    justify-content: space-around;
+    font-size: 14px;
+}
+
+.stat-row .text-warning {
+    color: var(--warning-color);
+}
+
+.stat-row .text-success {
+    color: var(--success-color);
+}
+
+/* 运单列表容器 */
+.problem-piece-list-container {
+    margin: 15px 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+}
+
+.list-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    background: #fafafa;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.batch-controls {
+    display: flex;
+    gap: 8px;
+}
+
+/* 运单列表 */
+.problem-piece-list {
+    max-height: 250px;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.pp-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: #fafafa;
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    font-size: 13px;
+    transition: all 0.3s;
+}
+
+.pp-item:last-child {
+    margin-bottom: 0;
+}
+
+.pp-item.pending {
+    background: #fafafa;
+}
+
+.pp-item.processing {
+    background: #e6f7ff;
+    border-left: 3px solid var(--primary-color);
+}
+
+.pp-item.success {
+    background: #e6f7e6;
+    border-left: 3px solid var(--success-color);
+}
+
+.pp-item.failed {
+    background: #fff2f0;
+    border-left: 3px solid var(--danger-color);
+}
+
+.pp-item-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.pp-item-billcode {
+    font-weight: 500;
+    font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.pp-item-detail {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.pp-item-status {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.pp-item-status.pending {
+    background: #f0f0f0;
+    color: var(--text-muted);
+}
+
+.pp-item-status.processing {
+    background: #e6f7ff;
+    color: var(--primary-color);
+}
+
+.pp-item-status.success {
+    background: #e6f7e6;
+    color: var(--success-color);
+}
+
+.pp-item-status.failed {
+    background: #fff2f0;
+    color: var(--danger-color);
+}
+
+/* 进度条 */
+.pp-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 15px;
+    border-top: 1px solid var(--border-color);
+    background: #fafafa;
+}
+
+.pp-progress .progress-bar {
+    flex: 1;
+    height: 8px;
+    background: #e0e0e0;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.pp-progress .progress-fill {
+    height: 100%;
+    background: var(--success-color);
+    transition: width 0.3s;
+}
+
+#pp-progress-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    min-width: 60px;
+    text-align: right;
+}
+
+.pp-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 30px 20px;
+    font-size: 14px;
+}

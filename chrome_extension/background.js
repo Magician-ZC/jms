@@ -158,6 +158,9 @@ async function connectWebSocket() {
       
       // 启动心跳 (Requirements: 7.6)
       startHeartbeat();
+      
+      // 重连后同步状态：如果本地有Token，重新上报以关联user_id
+      await resyncTokenAfterReconnect();
     };
 
     websocket.onmessage = (event) => {
@@ -343,7 +346,11 @@ async function sendTokenUpload(tokenInfo) {
       account: tokenInfo.account,
       accountType: accountType,
       source: tokenInfo.source,
-      extensionId: state.extensionId
+      extensionId: state.extensionId,
+      // 网点信息（仅网点账号有）
+      networkCode: tokenInfo.networkCode || null,
+      networkName: tokenInfo.networkName || null,
+      networkId: tokenInfo.networkId || null
     },
     timestamp: Date.now()
   };
@@ -383,6 +390,58 @@ function stopHeartbeat() {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
     console.log('[Background] Heartbeat stopped');
+  }
+}
+
+/**
+ * 重连后重新同步Token状态
+ * 从服务器获取当前Token状态，并更新本地状态
+ */
+async function resyncTokenAfterReconnect() {
+  console.log('[Background] Resyncing token state after reconnect...');
+  
+  try {
+    // 从服务器获取Token列表
+    const response = await fetch(`http://${CONFIG.serverAddress}/api/tokens?include_expired=true`);
+    if (!response.ok) {
+      console.warn('[Background] Failed to fetch tokens from server');
+      return;
+    }
+    
+    const data = await response.json();
+    const tokens = data.tokens || [];
+    
+    // 检查各类型Token状态
+    const agentToken = tokens.find(t => t.status === 'active' && t.account_type === 'agent');
+    const networkToken = tokens.find(t => t.status === 'active' && t.account_type === 'network');
+    
+    // 更新本地状态
+    state.tokenStatus.agent.hasToken = !!agentToken;
+    state.tokenStatus.network.hasToken = !!networkToken;
+    
+    // 如果当前类型的Token已过期，更新失效原因
+    const currentTypeToken = tokens.find(t => t.account_type === state.accountType);
+    if (currentTypeToken && currentTypeToken.status !== 'active') {
+      state.tokenExpiredReason = 'Token已过期，请重新登录';
+      state.tokenStatus[state.accountType].hasToken = false;
+    } else if (!currentTypeToken) {
+      state.tokenStatus[state.accountType].hasToken = false;
+    } else {
+      state.tokenExpiredReason = null;
+    }
+    
+    await saveState();
+    broadcastStateUpdate();
+    
+    console.log('[Background] Token state synced from server:', {
+      agent: state.tokenStatus.agent.hasToken,
+      network: state.tokenStatus.network.hasToken,
+      currentType: state.accountType,
+      expired: state.tokenExpiredReason
+    });
+    
+  } catch (error) {
+    console.error('[Background] Failed to resync token state:', error);
   }
 }
 

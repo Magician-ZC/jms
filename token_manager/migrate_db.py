@@ -1,6 +1,6 @@
 """
 数据库迁移脚本
-在现有数据库上添加 account_type 字段
+在现有数据库上添加 account_type 和网点信息字段
 """
 import sqlite3
 from pathlib import Path
@@ -10,7 +10,7 @@ DB_PATH = Path(__file__).parent.parent / "token_data" / "tokens.db"
 
 
 def migrate():
-    """执行迁移：添加 account_type 字段"""
+    """执行迁移：添加 account_type 和网点信息字段"""
     if not DB_PATH.exists():
         print(f"[迁移] 数据库不存在: {DB_PATH}")
         return False
@@ -19,28 +19,59 @@ def migrate():
     cursor = conn.cursor()
     
     try:
-        # 检查 account_type 字段是否已存在
+        # 获取现有字段
         cursor.execute("PRAGMA table_info(tokens)")
         columns = [col[1] for col in cursor.fetchall()]
         
-        if 'account_type' in columns:
-            print("[迁移] account_type 字段已存在，无需迁移")
-            return True
+        # 迁移1: 添加 account_type 字段
+        if 'account_type' not in columns:
+            print("[迁移] 添加 account_type 字段...")
+            cursor.execute("""
+                ALTER TABLE tokens 
+                ADD COLUMN account_type VARCHAR(20) DEFAULT 'AGENT'
+            """)
+            cursor.execute("""
+                UPDATE tokens SET account_type = 'AGENT' WHERE account_type IS NULL
+            """)
+            print("[迁移] account_type 字段添加完成")
+        else:
+            print("[迁移] account_type 字段已存在")
         
-        # 添加 account_type 字段，默认值为 'AGENT'
-        print("[迁移] 添加 account_type 字段...")
-        cursor.execute("""
-            ALTER TABLE tokens 
-            ADD COLUMN account_type VARCHAR(20) DEFAULT 'AGENT'
-        """)
+        # 迁移2: 添加 network_code 字段
+        if 'network_code' not in columns:
+            print("[迁移] 添加 network_code 字段...")
+            cursor.execute("""
+                ALTER TABLE tokens 
+                ADD COLUMN network_code VARCHAR(50)
+            """)
+            print("[迁移] network_code 字段添加完成")
+        else:
+            print("[迁移] network_code 字段已存在")
         
-        # 更新现有记录的默认值
-        cursor.execute("""
-            UPDATE tokens SET account_type = 'AGENT' WHERE account_type IS NULL
-        """)
+        # 迁移3: 添加 network_name 字段
+        if 'network_name' not in columns:
+            print("[迁移] 添加 network_name 字段...")
+            cursor.execute("""
+                ALTER TABLE tokens 
+                ADD COLUMN network_name VARCHAR(100)
+            """)
+            print("[迁移] network_name 字段添加完成")
+        else:
+            print("[迁移] network_name 字段已存在")
+        
+        # 迁移4: 添加 network_id 字段
+        if 'network_id' not in columns:
+            print("[迁移] 添加 network_id 字段...")
+            cursor.execute("""
+                ALTER TABLE tokens 
+                ADD COLUMN network_id INTEGER
+            """)
+            print("[迁移] network_id 字段添加完成")
+        else:
+            print("[迁移] network_id 字段已存在")
         
         conn.commit()
-        print("[迁移] 迁移完成！现有记录已设置为代理区(AGENT)类型")
+        print("[迁移] 所有迁移完成！")
         return True
         
     except Exception as e:

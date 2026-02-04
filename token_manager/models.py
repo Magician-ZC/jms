@@ -40,6 +40,10 @@ class Token(Base):
     token_value = Column(String(512), nullable=False)  # 加密存储
     status = Column(Enum(TokenStatus), default=TokenStatus.ACTIVE)
     extension_id = Column(String(64), nullable=True)
+    # 网点信息（仅网点账号有）
+    network_code = Column(String(64), nullable=True)  # 网点编码
+    network_name = Column(String(128), nullable=True)  # 网点名称
+    network_id = Column(Integer, nullable=True)  # 网点ID（用于问题件登记）
     created_at = Column(DateTime, default=get_china_now)
     updated_at = Column(DateTime, default=get_china_now, onupdate=get_china_now)
     last_active_at = Column(DateTime, nullable=True)
@@ -57,6 +61,9 @@ class Token(Base):
             "token_value": self.token_value,
             "status": self.status.value,
             "extension_id": self.extension_id,
+            "network_code": self.network_code,
+            "network_name": self.network_name,
+            "network_id": self.network_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "last_active_at": self.last_active_at.isoformat() if self.last_active_at else None,

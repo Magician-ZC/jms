@@ -79,7 +79,10 @@ class TokenService:
         user_id: str,
         extension_id: Optional[str] = None,
         account: Optional[str] = None,
-        account_type: Optional[str] = None
+        account_type: Optional[str] = None,
+        network_code: Optional[str] = None,
+        network_name: Optional[str] = None,
+        network_id: Optional[int] = None
     ) -> Token:
         """
         创建或更新Token（幂等存储）
@@ -93,6 +96,9 @@ class TokenService:
             extension_id: 可选的插件标识
             account: 可选的登录账号
             account_type: 可选的账号类型 ("agent" 或 "network")
+            network_code: 可选的网点编码（仅网点账号）
+            network_name: 可选的网点名称（仅网点账号）
+            network_id: 可选的网点ID（仅网点账号，用于问题件登记）
             
         Returns:
             Token: 创建或更新后的Token对象
@@ -148,8 +154,16 @@ class TokenService:
                 existing.account_type = token_account_type
                 if account:
                     existing.account = account
+                # 更新网点信息（仅网点账号）
+                if token_account_type == AccountType.NETWORK:
+                    if network_code:
+                        existing.network_code = network_code
+                    if network_name:
+                        existing.network_name = network_name
+                    if network_id:
+                        existing.network_id = network_id
                 existing.updated_at = get_china_now()
-                logger.info(f"更新Token: user_id={user_id}, account={account}, type={token_account_type.value}, token={mask_token(token)}")
+                logger.info(f"更新Token: user_id={user_id}, account={account}, type={token_account_type.value}, network={network_code}, token={mask_token(token)}")
             else:
                 # 创建新记录
                 now = get_china_now()
@@ -160,11 +174,14 @@ class TokenService:
                     token_value=encrypted_token,
                     status=TokenStatus.ACTIVE,
                     extension_id=extension_id,
+                    network_code=network_code if token_account_type == AccountType.NETWORK else None,
+                    network_name=network_name if token_account_type == AccountType.NETWORK else None,
+                    network_id=network_id if token_account_type == AccountType.NETWORK else None,
                     created_at=now,
                     updated_at=now
                 )
                 self.session.add(existing)
-                logger.info(f"创建Token: user_id={user_id}, account={account}, type={token_account_type.value}, token={mask_token(token)}")
+                logger.info(f"创建Token: user_id={user_id}, account={account}, type={token_account_type.value}, network={network_code}, token={mask_token(token)}")
             
             self.session.commit()
             self.session.refresh(existing)
@@ -374,6 +391,57 @@ class TokenService:
             self.session.rollback()
             logger.error(f"更新活跃时间失败: id={token_id}, error={str(e)}")
             raise TokenServiceError(f"更新活跃时间失败: {str(e)}")
+    
+    def update_network_info(
+        self, 
+        token_id: int, 
+        network_code: Optional[str] = None,
+        network_name: Optional[str] = None,
+        network_id: Optional[int] = None
+    ) -> bool:
+        """
+        更新Token的网点信息
+        
+        Args:
+            token_id: Token ID
+            network_code: 网点编码
+            network_name: 网点名称
+            network_id: 网点ID
+            
+        Returns:
+            bool: 是否更新成功
+            
+        Raises:
+            TokenNotFoundError: Token不存在
+            TokenServiceError: 数据库操作失败
+        """
+        try:
+            token = self.session.query(Token).filter(
+                Token.id == token_id
+            ).first()
+            
+            if token is None:
+                logger.warning(f"更新网点信息失败: Token不存在, id={token_id}")
+                raise TokenNotFoundError(f"Token不存在: id={token_id}")
+            
+            if network_code is not None:
+                token.network_code = network_code
+            if network_name is not None:
+                token.network_name = network_name
+            if network_id is not None:
+                token.network_id = network_id
+            token.updated_at = get_china_now()
+            
+            self.session.commit()
+            logger.info(f"更新网点信息: id={token_id}, code={network_code}, name={network_name}, network_id={network_id}")
+            return True
+            
+        except TokenNotFoundError:
+            raise
+        except SQLAlchemyError as e:
+            self.session.rollback()
+            logger.error(f"更新网点信息失败: id={token_id}, error={str(e)}")
+            raise TokenServiceError(f"更新网点信息失败: {str(e)}")
     
     def get_decrypted_token(self, token_id: int) -> Optional[str]:
         """
